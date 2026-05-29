@@ -25,6 +25,8 @@ export type ShotInput = {
   vertexY: number;
 };
 
+export type MoveDirection = -1 | 1;
+
 export type ShotResult = {
   id: number;
   shooterId: PlayerId;
@@ -42,10 +44,13 @@ export type ShotResult = {
 export type GameState = {
   players: [Player, Player];
   activePlayerId: PlayerId;
+  movementUsed: number;
   shotHistory: ShotResult[];
   lastShot: ShotResult | null;
   winnerId: PlayerId | null;
 };
+
+export const MAX_TURN_MOVE = 3;
 
 export function createInitialGameState(): GameState {
   return {
@@ -66,6 +71,7 @@ export function createInitialGameState(): GameState {
       },
     ],
     activePlayerId: "p1",
+    movementUsed: 0,
     shotHistory: [],
     lastShot: null,
     winnerId: null,
@@ -131,6 +137,7 @@ export function submitShot(state: GameState, input: ShotInput): GameState {
         Player,
       ],
       activePlayerId: winnerId,
+      movementUsed: 0,
       shotHistory: [result, ...state.shotHistory],
       lastShot: result,
       winnerId,
@@ -140,9 +147,54 @@ export function submitShot(state: GameState, input: ShotInput): GameState {
   return {
     players: nextPlayers,
     activePlayerId: target.id,
+    movementUsed: 0,
     shotHistory: [result, ...state.shotHistory],
     lastShot: result,
     winnerId: null,
+  };
+}
+
+export function getRemainingMove(state: GameState): number {
+  return Math.max(0, MAX_TURN_MOVE - state.movementUsed);
+}
+
+export function canMoveActivePlayer(state: GameState, direction: MoveDirection): boolean {
+  if (state.winnerId || getRemainingMove(state) <= 0) {
+    return false;
+  }
+
+  const activePlayer = getActivePlayer(state);
+  const targetPlayer = getTargetPlayer(state);
+  const nextX = activePlayer.tankPosition.x + direction;
+
+  return nextX >= BOARD.xMin && nextX <= BOARD.xMax && nextX !== targetPlayer.tankPosition.x;
+}
+
+export function moveActivePlayer(state: GameState, direction: MoveDirection): GameState {
+  if (!canMoveActivePlayer(state, direction)) {
+    return state;
+  }
+
+  const activePlayer = getActivePlayer(state);
+  const nextPlayers = state.players.map((player) => {
+    if (player.id !== activePlayer.id) {
+      return player;
+    }
+
+    return {
+      ...player,
+      tankPosition: {
+        ...player.tankPosition,
+        x: player.tankPosition.x + direction,
+      },
+    };
+  }) as [Player, Player];
+
+  return {
+    ...state,
+    players: nextPlayers,
+    movementUsed: state.movementUsed + 1,
+    lastShot: null,
   };
 }
 

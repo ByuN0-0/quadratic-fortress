@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import rough from "roughjs";
 import {
   Calculator,
+  ArrowLeft,
+  ArrowRight,
   HelpCircle,
   History,
   Play,
@@ -15,9 +17,13 @@ import {
 import {
   createInitialGameState,
   createPreviewShot,
+  canMoveActivePlayer,
   getActivePlayer,
+  getRemainingMove,
   getTargetPlayer,
+  moveActivePlayer,
   submitShot,
+  type MoveDirection,
   type GameState,
   type ShotInput,
   type ShotResult,
@@ -156,6 +162,11 @@ export default function QuadraticFortress() {
     setIsResultOpen(false);
   };
 
+  const moveTank = (direction: MoveDirection) => {
+    setGame((current) => moveActivePlayer(current, direction));
+    setIsResultOpen(false);
+  };
+
   const reset = () => {
     setGame(createInitialGameState());
     setInput(DEFAULT_INPUT);
@@ -254,6 +265,7 @@ export default function QuadraticFortress() {
           onFire={fire}
           onHistory={() => setIsHistoryOpen(true)}
           onInputChange={setInput}
+          onMove={moveTank}
           onResult={() => setIsResultOpen(true)}
           previewShot={previewShot}
         />
@@ -338,6 +350,7 @@ function AimControls({
   onFire,
   onHistory,
   onInputChange,
+  onMove,
   onResult,
   previewShot,
 }: {
@@ -346,11 +359,14 @@ function AimControls({
   onFire: () => void;
   onHistory: () => void;
   onInputChange: (input: ShotInput | ((current: ShotInput) => ShotInput)) => void;
+  onMove: (direction: MoveDirection) => void;
   onResult: () => void;
   previewShot: ShotResult;
 }) {
   const activePlayer = getActivePlayer(game);
   const canShowResult = Boolean(game.lastShot);
+  const remainingMove = getRemainingMove(game);
+  const moveStatus = getMoveStatus(game, remainingMove);
 
   return (
     <section className="aim-console" aria-label="조준 콘솔">
@@ -366,45 +382,69 @@ function AimControls({
           <div>
             <p className="eyebrow">Aim</p>
             <strong>{activePlayer.name} 조준</strong>
+            <span className="aim-coordinate">
+              ({input.vertexX}, {input.vertexY})
+            </span>
           </div>
         </div>
-        <label>
-          꼭짓점 x
-          <input
-            max={BOARD.xMax}
-            min={BOARD.xMin}
-            step="1"
-            type="number"
-            value={input.vertexX}
-            onChange={(event) =>
-              onInputChange((current) => ({
-                ...current,
-                vertexX: Number(event.target.value),
-              }))
-            }
-          />
-        </label>
-        <label>
-          꼭짓점 y
-          <input
-            max={BOARD.yMax}
-            min={1}
-            step="1"
-            type="number"
-            value={input.vertexY}
-            onChange={(event) =>
-              onInputChange((current) => ({
-                ...current,
-                vertexY: Number(event.target.value),
-              }))
-            }
-          />
-        </label>
+        <RangeControl
+          label="꼭짓점 x"
+          max={BOARD.xMax}
+          min={BOARD.xMin}
+          value={input.vertexX}
+          onChange={(value) =>
+            onInputChange((current) => ({
+              ...current,
+              vertexX: value,
+            }))
+          }
+        />
+        <RangeControl
+          label="꼭짓점 y"
+          max={BOARD.yMax}
+          min={1}
+          value={input.vertexY}
+          onChange={(value) =>
+            onInputChange((current) => ({
+              ...current,
+              vertexY: value,
+            }))
+          }
+        />
         <button className="fire-button" type="submit" disabled={Boolean(game.winnerId)}>
           <Play size={20} />
           발사
         </button>
       </form>
+      <div className="move-console" aria-label="탱크 이동">
+        <div>
+          <p className="eyebrow">Move</p>
+          <strong>남은 이동 {remainingMove}/3</strong>
+          <small>{moveStatus}</small>
+        </div>
+        <div className="move-buttons">
+          <button
+            className="icon-button"
+            type="button"
+            title="왼쪽으로 이동"
+            aria-label="왼쪽으로 이동"
+            disabled={!canMoveActivePlayer(game, -1)}
+            onClick={() => onMove(-1)}
+          >
+            <ArrowLeft size={20} />
+          </button>
+          <button
+            className="icon-button"
+            type="button"
+            title="오른쪽으로 이동"
+            aria-label="오른쪽으로 이동"
+            disabled={!canMoveActivePlayer(game, 1)}
+            onClick={() => onMove(1)}
+          >
+            <ArrowRight size={20} />
+          </button>
+        </div>
+      </div>
       <ShotToast result={game.lastShot} vertex={previewShot.vertex} />
       <div className="quick-actions">
         <button
@@ -422,6 +462,57 @@ function AimControls({
         </button>
       </div>
     </section>
+  );
+}
+
+function getMoveStatus(game: GameState, remainingMove: number): string {
+  if (game.winnerId) {
+    return "게임 종료";
+  }
+
+  if (remainingMove <= 0) {
+    return "이번 턴 이동 완료";
+  }
+
+  const canMoveLeft = canMoveActivePlayer(game, -1);
+  const canMoveRight = canMoveActivePlayer(game, 1);
+
+  if (!canMoveLeft && !canMoveRight) {
+    return "이동할 공간 없음";
+  }
+
+  return "발사 전 좌우 이동 가능";
+}
+
+function RangeControl({
+  label,
+  max,
+  min,
+  onChange,
+  value,
+}: {
+  label: string;
+  max: number;
+  min: number;
+  onChange: (value: number) => void;
+  value: number;
+}) {
+  return (
+    <label className="range-control">
+      <span>
+        {label}
+        <strong>{value}</strong>
+      </span>
+      <input
+        max={max}
+        min={min}
+        step="1"
+        type="range"
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        onInput={(event) => onChange(Number(event.currentTarget.value))}
+      />
+    </label>
   );
 }
 
