@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  applyLastShot,
   createInitialGameState,
   createPreviewShot,
   canMoveActivePlayer,
@@ -24,11 +25,12 @@ import {
   getRemainingMove,
   getTargetPlayer,
   moveActivePlayer,
-  submitShot,
+  prepareShot,
   MAX_TURN_MOVE,
   MOVE_STEP,
   type MoveDirection,
   type GameState,
+  type PlayerId,
   type ShotInput,
   type ShotResult,
 } from "../lib/game";
@@ -57,11 +59,14 @@ import "../styles/game.css";
 
 const STORAGE_KEY = "quadratic-fortress-tutorial-complete";
 const DEFAULT_INPUT: ShotInput = { vertexX: 0, vertexY: 6 };
+const HP_ANIMATION_DURATION = 600;
 
 type ScreenPoint = {
   x: number;
   y: number;
 };
+
+type DisplayHpByPlayer = Record<PlayerId, number>;
 
 export default function QuadraticFortress() {
   const [game, setGame] = useState<GameState>(() => createInitialGameState());
@@ -71,9 +76,15 @@ export default function QuadraticFortress() {
   const [isResultOpen, setIsResultOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isTrajectoryPreviewOn, setIsTrajectoryPreviewOn] = useState(false);
+  const [isShotAnimating, setIsShotAnimating] = useState(false);
+  const [displayHpByPlayer, setDisplayHpByPlayer] = useState<DisplayHpByPlayer>(() =>
+    createDisplayHpByPlayer(createInitialGameState().players),
+  );
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<number | null>(null);
+  const hpFrameRef = useRef<number | null>(null);
+  const displayHpRef = useRef<DisplayHpByPlayer>(displayHpByPlayer);
 
   const activePlayer = getActivePlayer(game);
   const targetPlayer = getTargetPlayer(game);
@@ -87,8 +98,9 @@ export default function QuadraticFortress() {
   }, []);
 
   useEffect(() => {
-    if (!game.lastShot || game.lastShot.validationErrors.length > 0) {
+    if (!game.lastShot || game.lastShot.validationErrors.length > 0 || game.lastShot.isApplied) {
       setAnimationProgress(1);
+      setIsShotAnimating(false);
       return;
     }
 
@@ -101,10 +113,15 @@ export default function QuadraticFortress() {
 
       if (progress < 1) {
         frameRef.current = requestAnimationFrame(tick);
+        return;
       }
+
+      setIsShotAnimating(false);
+      setGame((current) => applyLastShot(current));
     };
 
     setAnimationProgress(0);
+    setIsShotAnimating(true);
     frameRef.current = requestAnimationFrame(tick);
 
     return () => {
@@ -112,7 +129,60 @@ export default function QuadraticFortress() {
         cancelAnimationFrame(frameRef.current);
       }
     };
-  }, [game.lastShot?.id]);
+  }, [game.lastShot]);
+
+  useEffect(() => {
+    displayHpRef.current = displayHpByPlayer;
+  }, [displayHpByPlayer]);
+
+  useEffect(() => {
+    const targetHp = createDisplayHpByPlayer(game.players);
+    const startHp = displayHpRef.current;
+    const playerIds: PlayerId[] = ["p1", "p2"];
+    const hasChanged = playerIds.some((id) => startHp[id] !== targetHp[id]);
+
+    if (!hasChanged) {
+      return;
+    }
+
+    if (hpFrameRef.current) {
+      cancelAnimationFrame(hpFrameRef.current);
+    }
+
+    const hasHpIncrease = playerIds.some((id) => targetHp[id] > startHp[id]);
+    if (hasHpIncrease) {
+      displayHpRef.current = targetHp;
+      setDisplayHpByPlayer(targetHp);
+      return;
+    }
+
+    const startedAt = performance.now();
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / HP_ANIMATION_DURATION);
+      const nextHp = playerIds.reduce((next, id) => {
+        next[id] = startHp[id] + (targetHp[id] - startHp[id]) * progress;
+        return next;
+      }, {} as DisplayHpByPlayer);
+
+      displayHpRef.current = nextHp;
+      setDisplayHpByPlayer(nextHp);
+
+      if (progress < 1) {
+        hpFrameRef.current = requestAnimationFrame(tick);
+      } else {
+        displayHpRef.current = targetHp;
+        setDisplayHpByPlayer(targetHp);
+      }
+    };
+
+    hpFrameRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (hpFrameRef.current) {
+        cancelAnimationFrame(hpFrameRef.current);
+      }
+    };
+  }, [game.players]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -150,6 +220,7 @@ export default function QuadraticFortress() {
         game,
         previewShot,
         visibleShot,
+        displayHpByPlayer,
         animationProgress,
         Boolean(game.lastShot),
         isTrajectoryPreviewOn,
@@ -164,25 +235,43 @@ export default function QuadraticFortress() {
     }
 
     return () => observer.disconnect();
-  }, [game, previewShot, visibleShot, animationProgress, isTrajectoryPreviewOn]);
+  }, [game, previewShot, visibleShot, displayHpByPlayer, animationProgress, isTrajectoryPreviewOn]);
 
   const fire = () => {
-    setGame((current) => submitShot(current, input));
+    if (isShotAnimating) {
+      return;
+    }
+
+    setGame((current) => prepareShot(current, input));
     setIsResultOpen(false);
   };
 
   const moveTank = (direction: MoveDirection) => {
+    if (isShotAnimating) {
+      return;
+    }
+
     setGame((current) => moveActivePlayer(current, direction));
     setIsResultOpen(false);
   };
 
   const reset = () => {
+    if (frameRef.current) {
+      cancelAnimationFrame(frameRef.current);
+    }
+    if (hpFrameRef.current) {
+      cancelAnimationFrame(hpFrameRef.current);
+    }
+
     setGame(createInitialGameState());
     setInput(DEFAULT_INPUT);
     setAnimationProgress(1);
     setIsResultOpen(false);
     setIsHistoryOpen(false);
     setIsTrajectoryPreviewOn(false);
+    setIsShotAnimating(false);
+    displayHpRef.current = { p1: STARTING_HP, p2: STARTING_HP };
+    setDisplayHpByPlayer({ p1: STARTING_HP, p2: STARTING_HP });
   };
 
   useEffect(() => {
@@ -250,6 +339,7 @@ export default function QuadraticFortress() {
       <section className="arena-layout" aria-label="게임 화면">
         <GameHud
           activePlayerId={game.activePlayerId}
+          displayHpByPlayer={displayHpByPlayer}
           onReset={reset}
           onTutorial={() => setTutorial((current) => openTutorial(current))}
           players={game.players}
@@ -271,6 +361,7 @@ export default function QuadraticFortress() {
         <AimControls
           game={game}
           input={input}
+          isShotAnimating={isShotAnimating}
           onFire={fire}
           onHistory={() => setIsHistoryOpen(true)}
           onInputChange={setInput}
@@ -295,12 +386,14 @@ export default function QuadraticFortress() {
 
 function GameHud({
   activePlayerId,
+  displayHpByPlayer,
   onReset,
   onTutorial,
   players,
   winnerId,
 }: {
   activePlayerId: string;
+  displayHpByPlayer: DisplayHpByPlayer;
   onReset: () => void;
   onTutorial: () => void;
   players: GameState["players"];
@@ -320,10 +413,13 @@ function GameHud({
           >
             <div className="hud-player-row">
               <strong>{player.name}</strong>
-              <span>{player.hp} HP</span>
+              <span>{Math.round(displayHpByPlayer[player.id])} HP</span>
             </div>
-            <div className="hp-track" aria-label={`${player.name} 체력 ${player.hp}`}>
-              <span style={{ width: `${(player.hp / STARTING_HP) * 100}%` }} />
+            <div
+              className="hp-track"
+              aria-label={`${player.name} 체력 ${Math.round(displayHpByPlayer[player.id])}`}
+            >
+              <span style={{ width: `${(displayHpByPlayer[player.id] / STARTING_HP) * 100}%` }} />
             </div>
           </div>
         ))}
@@ -358,6 +454,7 @@ function GameHud({
 function AimControls({
   game,
   input,
+  isShotAnimating,
   onFire,
   onHistory,
   onInputChange,
@@ -369,6 +466,7 @@ function AimControls({
 }: {
   game: GameState;
   input: ShotInput;
+  isShotAnimating: boolean;
   onFire: () => void;
   onHistory: () => void;
   onInputChange: (input: ShotInput | ((current: ShotInput) => ShotInput)) => void;
@@ -381,7 +479,7 @@ function AimControls({
   const activePlayer = getActivePlayer(game);
   const canShowResult = Boolean(game.lastShot);
   const remainingMove = getRemainingMove(game);
-  const moveStatus = getMoveStatus(game, remainingMove);
+  const moveStatus = getMoveStatus(game, remainingMove, isShotAnimating);
 
   return (
     <section className="aim-console" aria-label="조준 콘솔">
@@ -426,7 +524,11 @@ function AimControls({
             }))
           }
         />
-        <button className="fire-button" type="submit" disabled={Boolean(game.winnerId)}>
+        <button
+          className="fire-button"
+          type="submit"
+          disabled={Boolean(game.winnerId) || isShotAnimating}
+        >
           <Play size={20} />
           발사
         </button>
@@ -445,7 +547,7 @@ function AimControls({
             type="button"
             title="왼쪽으로 이동"
             aria-label="왼쪽으로 이동"
-            disabled={!canMoveActivePlayer(game, -1)}
+            disabled={isShotAnimating || !canMoveActivePlayer(game, -1)}
             onClick={() => onMove(-1)}
           >
             <ArrowLeft size={20} />
@@ -455,7 +557,7 @@ function AimControls({
             type="button"
             title="오른쪽으로 이동"
             aria-label="오른쪽으로 이동"
-            disabled={!canMoveActivePlayer(game, 1)}
+            disabled={isShotAnimating || !canMoveActivePlayer(game, 1)}
             onClick={() => onMove(1)}
           >
             <ArrowRight size={20} />
@@ -491,7 +593,11 @@ function AimControls({
   );
 }
 
-function getMoveStatus(game: GameState, remainingMove: number): string {
+function getMoveStatus(game: GameState, remainingMove: number, isShotAnimating: boolean): string {
+  if (isShotAnimating) {
+    return "포탄 이동 중";
+  }
+
   if (game.winnerId) {
     return "게임 종료";
   }
@@ -512,6 +618,16 @@ function getMoveStatus(game: GameState, remainingMove: number): string {
 
 function formatPoint(point: Point): string {
   return `(${formatCoordinate(point.x)}, ${formatCoordinate(point.y)})`;
+}
+
+function createDisplayHpByPlayer(players: GameState["players"]): DisplayHpByPlayer {
+  return players.reduce(
+    (hpByPlayer, player) => {
+      hpByPlayer[player.id] = player.hp;
+      return hpByPlayer;
+    },
+    { p1: STARTING_HP, p2: STARTING_HP } as DisplayHpByPlayer,
+  );
 }
 
 function RangeControl({
@@ -1023,6 +1139,7 @@ function drawBoard(
   game: GameState,
   previewShot: ShotResult,
   visibleShot: ShotResult,
+  displayHpByPlayer: DisplayHpByPlayer,
   animationProgress: number,
   hasFiredShot: boolean,
   showTrajectoryPreview: boolean,
@@ -1083,7 +1200,14 @@ function drawBoard(
   }
 
   for (const player of game.players) {
-    drawTank(ctx, rc, toScreen, player.tankPosition, player.id === game.activePlayerId, player.id);
+    drawTank(
+      ctx,
+      rc,
+      toScreen,
+      player,
+      player.id === game.activePlayerId,
+      displayHpByPlayer[player.id],
+    );
   }
 
   drawVertex(ctx, rc, toScreen, previewShot.vertex);
@@ -1200,10 +1324,12 @@ function drawTank(
   ctx: CanvasRenderingContext2D,
   rc: ReturnType<typeof rough.canvas>,
   toScreen: (point: Point) => ScreenPoint,
-  position: Point,
+  player: GameState["players"][number],
   isActive: boolean,
-  id: string,
+  displayHp: number,
 ) {
+  const position = player.tankPosition;
+  const id = player.id;
   const screen = toScreen(position);
   const bodyColor = id === "p1" ? "#d94841" : "#2563eb";
   const turretDirection = id === "p1" ? 1 : -1;
@@ -1235,6 +1361,25 @@ function drawTank(
   ctx.fillStyle = "#232629";
   ctx.font = "700 13px ui-sans-serif, system-ui";
   ctx.fillText(id.toUpperCase(), screen.x - 10, screen.y - 30);
+  drawTankHpBar(ctx, screen, displayHp);
+}
+
+function drawTankHpBar(ctx: CanvasRenderingContext2D, screen: ScreenPoint, displayHp: number) {
+  const width = 48;
+  const height = 7;
+  const x = screen.x - width / 2;
+  const y = screen.y - 62;
+  const hpRatio = Math.max(0, Math.min(1, displayHp / STARTING_HP));
+
+  ctx.save();
+  ctx.fillStyle = "#fee2e2";
+  ctx.strokeStyle = "#202124";
+  ctx.lineWidth = 1.5;
+  ctx.fillRect(x, y, width, height);
+  ctx.fillStyle = hpRatio > 0.35 ? "#22c55e" : "#ef4444";
+  ctx.fillRect(x, y, width * hpRatio, height);
+  ctx.strokeRect(x, y, width, height);
+  ctx.restore();
 }
 
 function drawVertex(

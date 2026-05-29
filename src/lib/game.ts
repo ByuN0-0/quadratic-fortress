@@ -42,6 +42,7 @@ export type ShotResult = {
   isValidImpact: boolean;
   validationErrors: string[];
   explanation: string[];
+  isApplied: boolean;
 };
 
 export type GameState = {
@@ -91,6 +92,10 @@ export function getTargetPlayer(state: GameState): Player {
 }
 
 export function submitShot(state: GameState, input: ShotInput): GameState {
+  return applyLastShot(prepareShot(state, input));
+}
+
+export function prepareShot(state: GameState, input: ShotInput): GameState {
   if (state.winnerId) {
     return state;
   }
@@ -106,20 +111,39 @@ export function submitShot(state: GameState, input: ShotInput): GameState {
     vertex,
     ...math,
     explanation: buildExplanation(shooter, target, vertex, math),
+    isApplied: false,
   };
 
-  if (result.validationErrors.length > 0) {
-    return {
-      ...state,
-      lastShot: result,
-    };
+  return {
+    ...state,
+    lastShot: result,
+  };
+}
+
+export function applyLastShot(state: GameState): GameState {
+  const result = state.lastShot;
+
+  if (!result || result.isApplied || result.validationErrors.length > 0) {
+    return state;
   }
 
+  const shooter = state.players.find((player) => player.id === result.shooterId);
+  const target = state.players.find((player) => player.id === result.targetId);
+
+  if (!shooter || !target) {
+    return state;
+  }
+
+  const appliedResult = {
+    ...result,
+    isApplied: true,
+  };
+
   const nextPlayers = state.players.map((player) => {
-    if (player.id !== target.id) {
+    if (player.id !== result.targetId) {
       return {
         ...player,
-        isActive: player.id !== shooter.id,
+        isActive: player.id !== result.shooterId,
       };
     }
 
@@ -131,7 +155,7 @@ export function submitShot(state: GameState, input: ShotInput): GameState {
   }) as [Player, Player];
 
   const winnerId = nextPlayers.find((player) => player.hp <= 0)
-    ? shooter.id
+    ? result.shooterId
     : null;
 
   if (winnerId) {
@@ -142,18 +166,18 @@ export function submitShot(state: GameState, input: ShotInput): GameState {
       ],
       activePlayerId: winnerId,
       movementUsed: 0,
-      shotHistory: [result, ...state.shotHistory],
-      lastShot: result,
+      shotHistory: [appliedResult, ...state.shotHistory],
+      lastShot: appliedResult,
       winnerId,
     };
   }
 
   return {
     players: nextPlayers,
-    activePlayerId: target.id,
+    activePlayerId: result.targetId,
     movementUsed: 0,
-    shotHistory: [result, ...state.shotHistory],
-    lastShot: result,
+    shotHistory: [appliedResult, ...state.shotHistory],
+    lastShot: appliedResult,
     winnerId: null,
   };
 }
@@ -251,6 +275,7 @@ export function createPreviewShot(state: GameState, input: ShotInput): ShotResul
     vertex,
     ...math,
     explanation: buildExplanation(shooter, target, vertex, math),
+    isApplied: false,
   };
 }
 

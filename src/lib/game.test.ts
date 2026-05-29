@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_TURN_MOVE,
   MOVE_STEP,
+  applyLastShot,
   canMoveActivePlayer,
   createInitialGameState,
   getRemainingMove,
   moveActivePlayer,
+  prepareShot,
   submitShot,
 } from "./game";
 
@@ -25,6 +27,50 @@ describe("game reducer", () => {
     expect(next.players[1].hp).toBe(100);
     expect(next.shotHistory).toHaveLength(0);
     expect(next.lastShot?.validationErrors.length).toBeGreaterThan(0);
+  });
+
+  it("prepares a valid shot without immediately applying damage or switching turn", () => {
+    const state = moveActivePlayer(createInitialGameState(), 1);
+    const next = prepareShot(state, { vertexX: 0, vertexY: 6 });
+
+    expect(next.activePlayerId).toBe("p1");
+    expect(next.players[1].hp).toBe(100);
+    expect(next.movementUsed).toBe(0.1);
+    expect(next.shotHistory).toHaveLength(0);
+    expect(next.lastShot?.isApplied).toBe(false);
+    expect(next.lastShot?.damage).toBeGreaterThan(0);
+  });
+
+  it("applies the prepared valid shot and switches turn", () => {
+    const prepared = prepareShot(createInitialGameState(), { vertexX: 0, vertexY: 6 });
+    const applied = applyLastShot(prepared);
+
+    expect(applied.activePlayerId).toBe("p2");
+    expect(applied.players[1].hp).toBe(80);
+    expect(applied.movementUsed).toBe(0);
+    expect(applied.shotHistory).toHaveLength(1);
+    expect(applied.lastShot?.isApplied).toBe(true);
+  });
+
+  it("does not apply invalid prepared shots", () => {
+    const state = moveActivePlayer(createInitialGameState(), 1);
+    const prepared = prepareShot(state, { vertexX: -7.9, vertexY: 6 });
+    const applied = applyLastShot(prepared);
+
+    expect(applied.activePlayerId).toBe("p1");
+    expect(applied.players[1].hp).toBe(100);
+    expect(applied.movementUsed).toBe(0.1);
+    expect(applied.shotHistory).toHaveLength(0);
+    expect(applied.lastShot?.validationErrors.length).toBeGreaterThan(0);
+  });
+
+  it("does not apply the same prepared shot twice", () => {
+    const prepared = prepareShot(createInitialGameState(), { vertexX: 0, vertexY: 6 });
+    const applied = applyLastShot(prepared);
+    const reapplied = applyLastShot(applied);
+
+    expect(reapplied.players[1].hp).toBe(80);
+    expect(reapplied.shotHistory).toHaveLength(1);
   });
 
   it("moves the active player left and right before firing", () => {
@@ -86,13 +132,13 @@ describe("game reducer", () => {
   it("resets movement after a valid shot and keeps it after invalid shot", () => {
     let state = createInitialGameState();
     state = moveActivePlayer(state, 1);
-    state = submitShot(state, { vertexX: 0, vertexY: 6 });
+    state = applyLastShot(prepareShot(state, { vertexX: 0, vertexY: 6 }));
 
     expect(state.activePlayerId).toBe("p2");
     expect(state.movementUsed).toBe(0);
 
     state = moveActivePlayer(state, -1);
-    state = submitShot(state, { vertexX: 7.9, vertexY: 6 });
+    state = applyLastShot(prepareShot(state, { vertexX: 7.9, vertexY: 6 }));
 
     expect(state.activePlayerId).toBe("p2");
     expect(state.movementUsed).toBe(0.1);
