@@ -5,6 +5,8 @@ import {
   Calculator,
   ArrowLeft,
   ArrowRight,
+  Eye,
+  EyeOff,
   HelpCircle,
   History,
   Play,
@@ -68,6 +70,7 @@ export default function QuadraticFortress() {
   const [animationProgress, setAnimationProgress] = useState(1);
   const [isResultOpen, setIsResultOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isTrajectoryPreviewOn, setIsTrajectoryPreviewOn] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<number | null>(null);
@@ -149,6 +152,7 @@ export default function QuadraticFortress() {
         visibleShot,
         animationProgress,
         Boolean(game.lastShot),
+        isTrajectoryPreviewOn,
       );
     };
 
@@ -160,7 +164,7 @@ export default function QuadraticFortress() {
     }
 
     return () => observer.disconnect();
-  }, [game, previewShot, visibleShot, animationProgress]);
+  }, [game, previewShot, visibleShot, animationProgress, isTrajectoryPreviewOn]);
 
   const fire = () => {
     setGame((current) => submitShot(current, input));
@@ -178,6 +182,7 @@ export default function QuadraticFortress() {
     setAnimationProgress(1);
     setIsResultOpen(false);
     setIsHistoryOpen(false);
+    setIsTrajectoryPreviewOn(false);
   };
 
   useEffect(() => {
@@ -271,7 +276,9 @@ export default function QuadraticFortress() {
           onInputChange={setInput}
           onMove={moveTank}
           onResult={() => setIsResultOpen(true)}
+          onTrajectoryPreviewChange={setIsTrajectoryPreviewOn}
           previewShot={previewShot}
+          showTrajectoryPreview={isTrajectoryPreviewOn}
         />
       </section>
 
@@ -356,7 +363,9 @@ function AimControls({
   onInputChange,
   onMove,
   onResult,
+  onTrajectoryPreviewChange,
   previewShot,
+  showTrajectoryPreview,
 }: {
   game: GameState;
   input: ShotInput;
@@ -365,7 +374,9 @@ function AimControls({
   onInputChange: (input: ShotInput | ((current: ShotInput) => ShotInput)) => void;
   onMove: (direction: MoveDirection) => void;
   onResult: () => void;
+  onTrajectoryPreviewChange: (show: boolean) => void;
   previewShot: ShotResult;
+  showTrajectoryPreview: boolean;
 }) {
   const activePlayer = getActivePlayer(game);
   const canShowResult = Boolean(game.lastShot);
@@ -453,6 +464,15 @@ function AimControls({
       </div>
       <ShotToast result={game.lastShot} vertex={previewShot.vertex} />
       <div className="quick-actions">
+        <button
+          className={`secondary-button ${showTrajectoryPreview ? "is-active" : ""}`}
+          type="button"
+          aria-pressed={showTrajectoryPreview}
+          onClick={() => onTrajectoryPreviewChange(!showTrajectoryPreview)}
+        >
+          {showTrajectoryPreview ? <EyeOff size={18} /> : <Eye size={18} />}
+          예상 경로
+        </button>
         <button
           className="secondary-button"
           type="button"
@@ -1005,6 +1025,7 @@ function drawBoard(
   visibleShot: ShotResult,
   animationProgress: number,
   hasFiredShot: boolean,
+  showTrajectoryPreview: boolean,
 ) {
   const rc = rough.canvas(ctx.canvas);
   const margin = {
@@ -1034,6 +1055,7 @@ function drawBoard(
   const shotShooterPosition =
     game.players.find((player) => player.id === visibleShot.shooterId)?.tankPosition ??
     getActivePlayer(game).tankPosition;
+  const previewShooterPosition = getActivePlayer(game).tankPosition;
 
   if (hasFiredShot && visibleShot.isValidImpact) {
     drawTrajectory(
@@ -1046,6 +1068,18 @@ function drawBoard(
       animationProgress,
     );
     drawBlast(rc, toScreen, visibleShot);
+  }
+
+  if (showTrajectoryPreview) {
+    drawTrajectory(
+      ctx,
+      toScreen,
+      previewShot,
+      previewShooterPosition,
+      "#2563eb",
+      true,
+      1,
+    );
   }
 
   for (const player of game.players) {
