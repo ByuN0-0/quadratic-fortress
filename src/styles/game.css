@@ -1,6 +1,8 @@
 .game-shell {
+  display: grid;
+  align-content: start;
   min-height: 100vh;
-  padding: 24px;
+  padding: 18px;
   background:
     linear-gradient(rgba(31, 41, 55, 0.045) 1px, transparent 1px),
     linear-gradient(90deg, rgba(31, 41, 55, 0.045) 1px, transparent 1px),
@@ -66,6 +68,7 @@
 }
 
 .icon-button {
+  flex: 0 0 auto;
   width: 44px;
   padding: 0;
 }
@@ -97,16 +100,15 @@
   box-shadow: none;
 }
 
-.game-layout {
+.arena-layout {
   display: grid;
-  grid-template-columns: minmax(260px, 330px) minmax(420px, 1fr) minmax(240px, 310px);
-  max-width: 1440px;
+  grid-template-rows: auto minmax(430px, 1fr) auto;
+  width: min(1480px, 100%);
+  min-height: calc(100vh - 36px);
   margin: 0 auto;
   gap: 16px;
-  align-items: start;
 }
 
-.side-panel,
 .board-panel,
 .tutorial-panel {
   border: 2px solid #202124;
@@ -115,14 +117,70 @@
   box-shadow: 3px 3px 0 #202124;
 }
 
-.side-panel {
+.game-hud {
   display: grid;
-  gap: 16px;
-  padding: 16px;
+  grid-template-columns: minmax(180px, 260px) minmax(420px, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  border: 2px solid #202124;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 3px 3px 0 #202124;
+}
+
+.game-brand h1 {
+  margin: 0;
+  color: #111827;
+  font-size: clamp(1.15rem, 2vw, 1.7rem);
+  line-height: 1.05;
+}
+
+.versus-hud {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.hud-player {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 2px solid #202124;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.hud-player.is-active {
+  background: #ecfdf5;
+  box-shadow: inset 0 0 0 3px rgba(34, 197, 94, 0.18);
+}
+
+.hud-player-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 900;
+}
+
+.turn-badge {
+  min-width: 96px;
+  padding: 11px 14px;
+  border: 2px solid #202124;
+  border-radius: 8px;
+  background: #111827;
+  color: #ffffff;
+  font-weight: 900;
+  text-align: center;
 }
 
 .board-panel {
   overflow: hidden;
+}
+
+.arena-board {
+  align-self: stretch;
 }
 
 .board-panel canvas {
@@ -141,31 +199,8 @@
   font-weight: 700;
 }
 
-.status-grid {
-  display: grid;
-  gap: 10px;
-}
-
-.player-status {
-  padding: 12px;
-  border: 2px solid #202124;
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-.player-status.is-active {
-  background: #ecfdf5;
-}
-
-.player-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
 .hp-track {
-  height: 12px;
+  height: 14px;
   overflow: hidden;
   border: 2px solid #202124;
   border-radius: 8px;
@@ -178,31 +213,46 @@
   background: linear-gradient(90deg, #22c55e, #facc15);
 }
 
-.shot-form {
+.aim-console {
   display: grid;
+  grid-template-columns: minmax(520px, 1.35fr) minmax(240px, 0.65fr) auto;
+  align-items: center;
   gap: 12px;
+  padding: 12px;
+  border: 2px solid #202124;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 3px 3px 0 #202124;
 }
 
-.turn-label {
+.aim-form {
+  display: grid;
+  grid-template-columns: auto minmax(96px, 140px) minmax(96px, 140px) minmax(140px, 180px);
+  align-items: end;
+  gap: 10px;
+}
+
+.aim-title {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-weight: 800;
+  gap: 10px;
+  min-width: 140px;
+  color: #111827;
 }
 
-.turn-label strong {
-  color: #dc2626;
+.aim-title strong {
+  display: block;
+  font-size: 1.05rem;
 }
 
-.shot-form label {
+.aim-form label {
   display: grid;
   gap: 6px;
   color: #374151;
-  font-weight: 800;
+  font-weight: 900;
 }
 
-.shot-form input {
+.aim-form input {
   width: 100%;
   min-height: 42px;
   padding: 8px 10px;
@@ -213,9 +263,76 @@
   font-weight: 800;
 }
 
+.fire-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 0 20px;
+  border: 2px solid #202124;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #ffffff;
+  box-shadow: 2px 2px 0 #202124;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.fire-button:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
+.shot-toast {
+  display: grid;
+  gap: 2px;
+  min-height: 68px;
+  padding: 10px 12px;
+  border: 2px solid #202124;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.shot-toast span {
+  color: #7c2d12;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.shot-toast strong {
+  color: #111827;
+  font-size: 1.2rem;
+}
+
+.shot-toast small {
+  color: #4b5563;
+  font-weight: 700;
+}
+
+.shot-toast.is-hit {
+  background: #fef2f2;
+}
+
+.shot-toast.is-aiming {
+  background: #eff6ff;
+}
+
+.quick-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .result-panel {
   display: grid;
   gap: 12px;
+}
+
+.modal-heading h2 {
+  margin: 0;
+  color: #111827;
 }
 
 .formula-grid {
@@ -272,6 +389,39 @@
   gap: 10px;
   max-height: 620px;
   overflow: auto;
+}
+
+.history-popover {
+  display: grid;
+  gap: 14px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.modal-panel {
+  position: relative;
+  width: min(680px, 100%);
+  max-height: min(760px, calc(100vh - 36px));
+  overflow: auto;
+  padding: 20px;
+  border: 2px solid #202124;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 4px 4px 0 #202124;
+}
+
+.modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
 }
 
 .history-item {
@@ -602,17 +752,47 @@
 }
 
 @media (max-width: 1120px) {
-  .game-layout {
-    grid-template-columns: minmax(260px, 340px) minmax(420px, 1fr);
+  .arena-layout {
+    min-height: auto;
   }
 
-  .history-panel {
+  .game-hud {
+    grid-template-columns: 1fr auto auto;
+  }
+
+  .versus-hud {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .aim-console {
+    grid-template-columns: minmax(0, 1fr) minmax(190px, 240px);
+    align-items: stretch;
+  }
+
+  .aim-form {
+    grid-row: 1 / span 2;
+    grid-template-columns: auto minmax(92px, 1fr) minmax(92px, 1fr);
+    align-items: end;
+  }
+
+  .fire-button {
     grid-column: 1 / -1;
   }
 
-  .history-list {
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    max-height: none;
+  .shot-toast {
+    min-height: 0;
+  }
+
+  .quick-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    justify-content: stretch;
+  }
+
+  .quick-actions .secondary-button {
+    width: 100%;
+    min-height: 39px;
   }
 
   .tutorial-demo-grid {
@@ -625,26 +805,41 @@
     padding: 14px;
   }
 
-  .game-topbar,
+  .game-hud,
   .canvas-caption {
     align-items: flex-start;
-    flex-direction: column;
   }
 
-  .game-layout {
+  .game-hud {
+    grid-template-columns: 1fr auto;
+  }
+
+  .game-brand {
+    min-width: 0;
+  }
+
+  .turn-badge {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .versus-hud,
+  .aim-console,
+  .aim-form {
     grid-template-columns: 1fr;
   }
 
-  .side-panel {
-    order: 2;
+  .aim-form {
+    grid-row: auto;
+    align-items: stretch;
   }
 
-  .board-panel {
-    order: 1;
+  .arena-layout {
+    grid-template-rows: auto auto auto;
   }
 
-  .history-panel {
-    order: 3;
+  .arena-board {
+    min-width: 0;
   }
 
   .formula-grid {

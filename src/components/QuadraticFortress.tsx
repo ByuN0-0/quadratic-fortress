@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import rough from "roughjs";
-import { HelpCircle, Play, RotateCcw, SkipBack, SkipForward, X } from "lucide-react";
+import {
+  Calculator,
+  HelpCircle,
+  History,
+  Play,
+  RotateCcw,
+  SkipBack,
+  SkipForward,
+  Target,
+  X,
+} from "lucide-react";
 import {
   createInitialGameState,
   createPreviewShot,
@@ -44,6 +55,8 @@ export default function QuadraticFortress() {
   const [input, setInput] = useState<ShotInput>(DEFAULT_INPUT);
   const [tutorial, setTutorial] = useState<TutorialState>(() => createInitialTutorialState(true));
   const [animationProgress, setAnimationProgress] = useState(1);
+  const [isResultOpen, setIsResultOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<number | null>(null);
@@ -100,7 +113,9 @@ export default function QuadraticFortress() {
       }
 
       const width = container.clientWidth;
-      const height = Math.max(360, Math.min(620, width * 0.58));
+      const reservedUiHeight = window.innerWidth <= 1120 ? 350 : 250;
+      const availableBoardHeight = window.innerHeight - reservedUiHeight;
+      const height = Math.max(330, Math.min(620, width * 0.58, availableBoardHeight));
       const ratio = window.devicePixelRatio || 1;
 
       canvas.width = Math.floor(width * ratio);
@@ -138,13 +153,32 @@ export default function QuadraticFortress() {
 
   const fire = () => {
     setGame((current) => submitShot(current, input));
+    setIsResultOpen(false);
   };
 
   const reset = () => {
     setGame(createInitialGameState());
     setInput(DEFAULT_INPUT);
     setAnimationProgress(1);
+    setIsResultOpen(false);
+    setIsHistoryOpen(false);
   };
+
+  useEffect(() => {
+    if (!isResultOpen && !isHistoryOpen) {
+      return;
+    }
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsResultOpen(false);
+        setIsHistoryOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [isResultOpen, isHistoryOpen]);
 
   const closeTutorialAndRemember = () => {
     setTutorial((current) => {
@@ -192,105 +226,16 @@ export default function QuadraticFortress() {
 
   return (
     <main className="game-shell">
-      <section className="game-topbar" aria-label="게임 상태">
-        <div>
-          <p className="eyebrow">Quadratic Fortress</p>
-          <h1>꼭짓점으로 쏘는 2차함수 포트리스</h1>
-        </div>
-        <div className="topbar-actions">
-          <button
-            className="icon-button"
-            type="button"
-            title="튜토리얼 열기"
-            aria-label="튜토리얼 열기"
-            onClick={() => setTutorial((current) => openTutorial(current))}
-          >
-            <HelpCircle size={20} />
-          </button>
-          <button
-            className="icon-button"
-            type="button"
-            title="게임 초기화"
-            aria-label="게임 초기화"
-            onClick={reset}
-          >
-            <RotateCcw size={20} />
-          </button>
-        </div>
-      </section>
+      <section className="arena-layout" aria-label="게임 화면">
+        <GameHud
+          activePlayerId={game.activePlayerId}
+          onReset={reset}
+          onTutorial={() => setTutorial((current) => openTutorial(current))}
+          players={game.players}
+          winnerId={game.winnerId}
+        />
 
-      <section className="game-layout">
-        <aside className="side-panel" aria-label="플레이어와 입력">
-          <div className="status-grid">
-            {game.players.map((player) => (
-              <div
-                className={`player-status ${player.id === activePlayer.id ? "is-active" : ""}`}
-                key={player.id}
-              >
-                <div className="player-row">
-                  <strong>{player.name}</strong>
-                  <span>{player.hp} HP</span>
-                </div>
-                <div className="hp-track" aria-label={`${player.name} 체력 ${player.hp}`}>
-                  <span style={{ width: `${(player.hp / STARTING_HP) * 100}%` }} />
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <form
-            className="shot-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              fire();
-            }}
-          >
-            <div className="turn-label">
-              <span>{activePlayer.name} 차례</span>
-              {game.winnerId ? <strong>{activePlayer.name} 승리</strong> : null}
-            </div>
-            <label>
-              꼭짓점 x
-              <input
-                max={BOARD.xMax}
-                min={BOARD.xMin}
-                step="1"
-                type="number"
-                value={input.vertexX}
-                onChange={(event) =>
-                  setInput((current) => ({
-                    ...current,
-                    vertexX: Number(event.target.value),
-                  }))
-                }
-              />
-            </label>
-            <label>
-              꼭짓점 y
-              <input
-                max={BOARD.yMax}
-                min={1}
-                step="1"
-                type="number"
-                value={input.vertexY}
-                onChange={(event) =>
-                  setInput((current) => ({
-                    ...current,
-                    vertexY: Number(event.target.value),
-                  }))
-                }
-              />
-            </label>
-            <button className="primary-button" type="submit" disabled={Boolean(game.winnerId)}>
-              <Play size={18} />
-              발사
-            </button>
-          </form>
-
-          <ResultPanel result={visibleShot} isPreview={!game.lastShot} />
-        </aside>
-
-        <section className="board-panel" aria-label="좌표평면 게임판">
+        <section className="board-panel arena-board" aria-label="좌표평면 게임판">
           <canvas ref={canvasRef} aria-label="포물선 전장" role="img" />
           <div className="canvas-caption">
             <span>
@@ -303,90 +248,326 @@ export default function QuadraticFortress() {
           </div>
         </section>
 
-        <aside className="side-panel history-panel" aria-label="발사 기록">
-          <div className="panel-heading">
-            <p className="eyebrow">History</p>
-            <h2>발사 기록</h2>
-          </div>
-          <div className="history-list">
-            {game.shotHistory.length === 0 ? (
-              <p className="empty-history">아직 발사 기록이 없습니다.</p>
-            ) : (
-              game.shotHistory.map((shot) => (
-                <article className="history-item" key={shot.id}>
-                  <div>
-                    <strong>
-                      #{shot.id} {shot.shooterId.toUpperCase()} → {shot.targetId.toUpperCase()}
-                    </strong>
-                    <span>피해 {shot.damage}</span>
-                  </div>
-                  <p>
-                    꼭짓점 ({shot.vertex.x}, {shot.vertex.y}), 착탄점 (
-                    {round(shot.impactPoint.x)}, {round(shot.impactPoint.y)})
-                  </p>
-                </article>
-              ))
-            )}
-          </div>
-        </aside>
+        <AimControls
+          game={game}
+          input={input}
+          onFire={fire}
+          onHistory={() => setIsHistoryOpen(true)}
+          onInputChange={setInput}
+          onResult={() => setIsResultOpen(true)}
+          previewShot={previewShot}
+        />
       </section>
+
+      {isResultOpen && game.lastShot ? (
+        <ResultDetailsModal result={game.lastShot} onClose={() => setIsResultOpen(false)} />
+      ) : null}
+
+      {isHistoryOpen ? (
+        <HistoryPopover history={game.shotHistory} onClose={() => setIsHistoryOpen(false)} />
+      ) : null}
     </main>
   );
 }
 
-function ResultPanel({ result, isPreview }: { result: ShotResult; isPreview: boolean }) {
-  if (isPreview) {
-    return (
-      <section className="result-panel" aria-label="조준 정보">
-        <div className="panel-heading">
-          <p className="eyebrow">Aim</p>
-          <h2>조준점</h2>
-        </div>
-        <dl className="formula-grid aim-grid">
-          <div>
-            <dt>꼭짓점</dt>
-            <dd>
-              ({result.vertex.x}, {result.vertex.y})
-            </dd>
+function GameHud({
+  activePlayerId,
+  onReset,
+  onTutorial,
+  players,
+  winnerId,
+}: {
+  activePlayerId: string;
+  onReset: () => void;
+  onTutorial: () => void;
+  players: GameState["players"];
+  winnerId: string | null;
+}) {
+  return (
+    <header className="game-hud" aria-label="게임 상태">
+      <div className="game-brand">
+        <p className="eyebrow">Quadratic Fortress</p>
+        <h1>2차함수 포트리스</h1>
+      </div>
+      <div className="versus-hud">
+        {players.map((player) => (
+          <div
+            className={`hud-player ${player.id === activePlayerId ? "is-active" : ""}`}
+            key={player.id}
+          >
+            <div className="hud-player-row">
+              <strong>{player.name}</strong>
+              <span>{player.hp} HP</span>
+            </div>
+            <div className="hp-track" aria-label={`${player.name} 체력 ${player.hp}`}>
+              <span style={{ width: `${(player.hp / STARTING_HP) * 100}%` }} />
+            </div>
           </div>
-        </dl>
-        <p className="aim-note">발사하면 포물선 궤적, 착탄점, 원의 방정식 피해 계산을 보여줍니다.</p>
-      </section>
+        ))}
+      </div>
+      <div className="turn-badge" aria-live="polite">
+        {winnerId ? `${winnerId.toUpperCase()} 승리` : `${activePlayerId.toUpperCase()} 턴`}
+      </div>
+      <div className="topbar-actions">
+        <button
+          className="icon-button"
+          type="button"
+          title="튜토리얼 열기"
+          aria-label="튜토리얼 열기"
+          onClick={onTutorial}
+        >
+          <HelpCircle size={20} />
+        </button>
+        <button
+          className="icon-button"
+          type="button"
+          title="게임 초기화"
+          aria-label="게임 초기화"
+          onClick={onReset}
+        >
+          <RotateCcw size={20} />
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function AimControls({
+  game,
+  input,
+  onFire,
+  onHistory,
+  onInputChange,
+  onResult,
+  previewShot,
+}: {
+  game: GameState;
+  input: ShotInput;
+  onFire: () => void;
+  onHistory: () => void;
+  onInputChange: (input: ShotInput | ((current: ShotInput) => ShotInput)) => void;
+  onResult: () => void;
+  previewShot: ShotResult;
+}) {
+  const activePlayer = getActivePlayer(game);
+  const canShowResult = Boolean(game.lastShot);
+
+  return (
+    <section className="aim-console" aria-label="조준 콘솔">
+      <form
+        className="aim-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onFire();
+        }}
+      >
+        <div className="aim-title">
+          <Target size={20} />
+          <div>
+            <p className="eyebrow">Aim</p>
+            <strong>{activePlayer.name} 조준</strong>
+          </div>
+        </div>
+        <label>
+          꼭짓점 x
+          <input
+            max={BOARD.xMax}
+            min={BOARD.xMin}
+            step="1"
+            type="number"
+            value={input.vertexX}
+            onChange={(event) =>
+              onInputChange((current) => ({
+                ...current,
+                vertexX: Number(event.target.value),
+              }))
+            }
+          />
+        </label>
+        <label>
+          꼭짓점 y
+          <input
+            max={BOARD.yMax}
+            min={1}
+            step="1"
+            type="number"
+            value={input.vertexY}
+            onChange={(event) =>
+              onInputChange((current) => ({
+                ...current,
+                vertexY: Number(event.target.value),
+              }))
+            }
+          />
+        </label>
+        <button className="fire-button" type="submit" disabled={Boolean(game.winnerId)}>
+          <Play size={20} />
+          발사
+        </button>
+      </form>
+      <ShotToast result={game.lastShot} vertex={previewShot.vertex} />
+      <div className="quick-actions">
+        <button
+          className="secondary-button"
+          type="button"
+          disabled={!canShowResult}
+          onClick={onResult}
+        >
+          <Calculator size={18} />
+          계산 보기
+        </button>
+        <button className="secondary-button" type="button" onClick={onHistory}>
+          <History size={18} />
+          기록
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ShotToast({ result, vertex }: { result: ShotResult | null; vertex: Point }) {
+  if (!result) {
+    return (
+      <div className="shot-toast is-aiming" aria-live="polite">
+        <span>조준점</span>
+        <strong>
+          ({vertex.x}, {vertex.y})
+        </strong>
+      </div>
     );
   }
 
-  return (
-    <section className="result-panel" aria-label="계산 결과">
-      <div className="panel-heading">
-        <p className="eyebrow">Result</p>
-        <h2>이번 발사 계산</h2>
+  if (result.validationErrors.length > 0) {
+    return (
+      <div className="shot-toast is-miss" aria-live="polite">
+        <span>발사 불가</span>
+        <strong>{result.validationErrors[0]}</strong>
       </div>
-      <dl className="formula-grid">
-        <div>
-          <dt>식</dt>
-          <dd>{formatEquation(result.quadratic)}</dd>
+    );
+  }
+
+  const didDamage = result.damage > 0;
+  const label = didDamage ? "명중" : result.isValidImpact ? "빗나감" : "착탄 실패";
+  const detail = didDamage
+    ? `피해 ${result.damage}`
+    : result.isValidImpact
+      ? "폭발 반경 밖"
+      : "착탄점 전장 밖";
+
+  return (
+    <div className={`shot-toast ${didDamage ? "is-hit" : "is-miss"}`} aria-live="polite">
+      <span>{label}</span>
+      <strong>{detail}</strong>
+      <small>
+        착탄점 ({round(result.impactPoint.x)}, {round(result.impactPoint.y)})
+      </small>
+    </div>
+  );
+}
+
+function ResultDetailsModal({ result, onClose }: { result: ShotResult; onClose: () => void }) {
+  return (
+    <ModalFrame label="계산 결과" onClose={onClose}>
+      <section className="result-panel" aria-label="계산 결과">
+        <div className="modal-heading">
+          <p className="eyebrow">Result</p>
+          <h2>이번 발사 계산</h2>
         </div>
-        <div>
-          <dt>착탄점</dt>
-          <dd>
-            ({round(result.impactPoint.x)}, {round(result.impactPoint.y)})
-          </dd>
+        <dl className="formula-grid">
+          <div>
+            <dt>식</dt>
+            <dd>{formatEquation(result.quadratic)}</dd>
+          </div>
+          <div>
+            <dt>착탄점</dt>
+            <dd>
+              ({round(result.impactPoint.x)}, {round(result.impactPoint.y)})
+            </dd>
+          </div>
+          <div>
+            <dt>거리</dt>
+            <dd>{round(result.distanceToTarget)}칸</dd>
+          </div>
+          <div>
+            <dt>피해</dt>
+            <dd>{result.damage}</dd>
+          </div>
+        </dl>
+        <ol className="explanation-list">
+          {result.explanation.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ol>
+      </section>
+    </ModalFrame>
+  );
+}
+
+function HistoryPopover({ history, onClose }: { history: ShotResult[]; onClose: () => void }) {
+  return (
+    <ModalFrame label="발사 기록" onClose={onClose}>
+      <section className="history-popover" aria-label="발사 기록">
+        <div className="modal-heading">
+          <p className="eyebrow">History</p>
+          <h2>발사 기록</h2>
         </div>
-        <div>
-          <dt>거리</dt>
-          <dd>{round(result.distanceToTarget)}칸</dd>
+        <div className="history-list">
+          {history.length === 0 ? (
+            <p className="empty-history">아직 발사 기록이 없습니다.</p>
+          ) : (
+            history.map((shot) => (
+              <article className="history-item" key={shot.id}>
+                <div>
+                  <strong>
+                    #{shot.id} {shot.shooterId.toUpperCase()} → {shot.targetId.toUpperCase()}
+                  </strong>
+                  <span>피해 {shot.damage}</span>
+                </div>
+                <p>
+                  꼭짓점 ({shot.vertex.x}, {shot.vertex.y}), 착탄점 (
+                  {round(shot.impactPoint.x)}, {round(shot.impactPoint.y)})
+                </p>
+              </article>
+            ))
+          )}
         </div>
-        <div>
-          <dt>피해</dt>
-          <dd>{result.damage}</dd>
-        </div>
-      </dl>
-      <ol className="explanation-list">
-        {result.explanation.map((line) => (
-          <li key={line}>{line}</li>
-        ))}
-      </ol>
-    </section>
+      </section>
+    </ModalFrame>
+  );
+}
+
+function ModalFrame({
+  children,
+  label,
+  onClose,
+}: {
+  children: ReactNode;
+  label: string;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+      role="presentation"
+    >
+      <div aria-label={label} aria-modal="true" className="modal-panel" role="dialog">
+        <button
+          className="icon-button modal-close"
+          type="button"
+          title="닫기"
+          aria-label="닫기"
+          onClick={onClose}
+        >
+          <X size={20} />
+        </button>
+        {children}
+      </div>
+    </div>
   );
 }
 
