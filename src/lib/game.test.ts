@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_TURN_MOVE,
+  MOVE_STEP,
   canMoveActivePlayer,
   createInitialGameState,
   getRemainingMove,
@@ -30,18 +31,18 @@ describe("game reducer", () => {
     let state = createInitialGameState();
 
     state = moveActivePlayer(state, 1);
-    expect(state.players[0].tankPosition.x).toBe(-7);
-    expect(state.movementUsed).toBe(1);
+    expect(state.players[0].tankPosition.x).toBe(-7.9);
+    expect(state.movementUsed).toBe(0.1);
 
     state = moveActivePlayer(state, -1);
     expect(state.players[0].tankPosition.x).toBe(-8);
-    expect(state.movementUsed).toBe(2);
+    expect(state.movementUsed).toBe(0.2);
   });
 
   it("limits active player movement to three spaces per turn", () => {
     let state = createInitialGameState();
 
-    for (let move = 0; move < MAX_TURN_MOVE; move += 1) {
+    for (let move = 0; move < MAX_TURN_MOVE / MOVE_STEP; move += 1) {
       state = moveActivePlayer(state, 1);
     }
 
@@ -55,8 +56,10 @@ describe("game reducer", () => {
   it("does not move outside the board", () => {
     let state = createInitialGameState();
 
-    state = moveActivePlayer(state, -1);
-    state = moveActivePlayer(state, -1);
+    for (let move = 0; move < 20; move += 1) {
+      state = moveActivePlayer(state, -1);
+    }
+
     const blocked = moveActivePlayer(state, -1);
 
     expect(state.players[0].tankPosition.x).toBe(-10);
@@ -70,7 +73,7 @@ describe("game reducer", () => {
       players: [
         {
           ...createInitialGameState().players[0],
-          tankPosition: { x: 7, y: 0 },
+          tankPosition: { x: 7.9, y: 0 },
         },
         createInitialGameState().players[1],
       ] as ReturnType<typeof createInitialGameState>["players"],
@@ -89,10 +92,10 @@ describe("game reducer", () => {
     expect(state.movementUsed).toBe(0);
 
     state = moveActivePlayer(state, -1);
-    state = submitShot(state, { vertexX: 7, vertexY: 6 });
+    state = submitShot(state, { vertexX: 7.9, vertexY: 6 });
 
     expect(state.activePlayerId).toBe("p2");
-    expect(state.movementUsed).toBe(1);
+    expect(state.movementUsed).toBe(0.1);
     expect(state.lastShot?.validationErrors.length).toBeGreaterThan(0);
   });
 

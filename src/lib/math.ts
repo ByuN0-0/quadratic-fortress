@@ -28,10 +28,24 @@ export const BOARD = {
 export const BLAST_RADIUS = 2;
 export const MAX_DAMAGE = 20;
 export const STARTING_HP = 100;
+export const COORDINATE_STEP = 0.1;
+export const FLOAT_EPSILON = 1e-9;
 
 export function round(value: number, places = 2): number {
   const scale = 10 ** places;
   return Math.round(value * scale) / scale;
+}
+
+export function roundToStep(value: number, places = 1): number {
+  return round(value, places);
+}
+
+export function formatCoordinate(value: number): string {
+  return roundToStep(value).toFixed(1);
+}
+
+export function nearlyEqual(a: number, b: number, tolerance = FLOAT_EPSILON): boolean {
+  return Math.abs(a - b) <= tolerance;
 }
 
 export function validateVertex(vertex: Point, shooter: Point): string[] {
@@ -42,15 +56,15 @@ export function validateVertex(vertex: Point, shooter: Point): string[] {
     return errors;
   }
 
-  if (vertex.x < BOARD.xMin || vertex.x > BOARD.xMax) {
+  if (vertex.x < BOARD.xMin - FLOAT_EPSILON || vertex.x > BOARD.xMax + FLOAT_EPSILON) {
     errors.push(`꼭짓점 x는 ${BOARD.xMin}부터 ${BOARD.xMax} 사이여야 합니다.`);
   }
 
-  if (vertex.y <= BOARD.yMin || vertex.y > BOARD.yMax) {
+  if (vertex.y <= BOARD.yMin + FLOAT_EPSILON || vertex.y > BOARD.yMax + FLOAT_EPSILON) {
     errors.push(`꼭짓점 y는 0보다 크고 ${BOARD.yMax} 이하여야 합니다.`);
   }
 
-  if (vertex.x === shooter.x) {
+  if (nearlyEqual(vertex.x, shooter.x)) {
     errors.push("꼭짓점 x가 탱크 x와 같으면 a값을 계산할 수 없습니다.");
   }
 
@@ -78,7 +92,11 @@ export function calculateImpactPoint(shooter: Point, vertex: Point): Point {
 }
 
 export function isImpactInBounds(point: Point): boolean {
-  return point.x >= BOARD.xMin && point.x <= BOARD.xMax && point.y === 0;
+  return (
+    point.x >= BOARD.xMin - FLOAT_EPSILON &&
+    point.x <= BOARD.xMax + FLOAT_EPSILON &&
+    nearlyEqual(point.y, 0)
+  );
 }
 
 export function isImpactInShotDirection(
@@ -86,6 +104,10 @@ export function isImpactInShotDirection(
   target: Point,
   impactPoint: Point,
 ): boolean {
+  if (nearlyEqual(target.x, shooter.x) || nearlyEqual(impactPoint.x, shooter.x)) {
+    return false;
+  }
+
   const direction = Math.sign(target.x - shooter.x);
   return direction === 0 ? false : Math.sign(impactPoint.x - shooter.x) === direction;
 }
@@ -138,5 +160,5 @@ export function formatEquation(quadratic: Quadratic): string {
   }
 
   const sign = quadratic.k >= 0 ? "+" : "-";
-  return `y = ${round(quadratic.a, 3)}(x - ${round(quadratic.h)})² ${sign} ${Math.abs(round(quadratic.k))}`;
+  return `y = ${round(quadratic.a, 3)}(x - ${formatCoordinate(quadratic.h)})² ${sign} ${formatCoordinate(Math.abs(quadratic.k))}`;
 }

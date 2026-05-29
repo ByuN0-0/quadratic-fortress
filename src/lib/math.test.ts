@@ -18,6 +18,16 @@ describe("quadratic math", () => {
     expect(quadratic.k).toBe(6);
   });
 
+  it("calculates decimal-coordinate shots", () => {
+    const quadratic = calculateQuadratic({ x: -7.9, y: 0 }, { x: 0.1, y: 6.4 });
+    const impactPoint = calculateImpactPoint({ x: -7.9, y: 0 }, { x: 0.1, y: 6.4 });
+
+    expect(quadratic.a).toBeCloseTo(-0.1);
+    expect(quadratic.h).toBe(0.1);
+    expect(quadratic.k).toBe(6.4);
+    expect(impactPoint).toEqual({ x: 8.1, y: 0 });
+  });
+
   it("rejects impossible or out-of-range vertices", () => {
     expect(validateVertex({ x: -8, y: 6 }, { x: -8, y: 0 })).toContain(
       "꼭짓점 x가 탱크 x와 같으면 a값을 계산할 수 없습니다.",
@@ -27,6 +37,12 @@ describe("quadratic math", () => {
     );
     expect(validateVertex({ x: 0, y: 0 }, { x: -8, y: 0 })).toContain(
       "꼭짓점 y는 0보다 크고 10 이하여야 합니다.",
+    );
+  });
+
+  it("rejects decimal vertices with the same x as the shooter", () => {
+    expect(validateVertex({ x: -7.9, y: 6 }, { x: -7.9, y: 0 })).toContain(
+      "꼭짓점 x가 탱크 x와 같으면 a값을 계산할 수 없습니다.",
     );
   });
 

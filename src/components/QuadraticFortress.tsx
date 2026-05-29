@@ -23,6 +23,8 @@ import {
   getTargetPlayer,
   moveActivePlayer,
   submitShot,
+  MAX_TURN_MOVE,
+  MOVE_STEP,
   type MoveDirection,
   type GameState,
   type ShotInput,
@@ -31,10 +33,13 @@ import {
 import {
   BLAST_RADIUS,
   BOARD,
+  COORDINATE_STEP,
   STARTING_HP,
+  formatCoordinate,
   formatEquation,
   getYAtX,
   round,
+  roundToStep,
   type Point,
 } from "../lib/math";
 import {
@@ -250,11 +255,10 @@ export default function QuadraticFortress() {
           <canvas ref={canvasRef} aria-label="포물선 전장" role="img" />
           <div className="canvas-caption">
             <span>
-              {activePlayer.name}: ({activePlayer.tankPosition.x}, {activePlayer.tankPosition.y})
+              {activePlayer.name}: {formatPoint(activePlayer.tankPosition)}
             </span>
             <span>
-              목표 {targetPlayer.name}: ({targetPlayer.tankPosition.x},{" "}
-              {targetPlayer.tankPosition.y})
+              목표 {targetPlayer.name}: {formatPoint(targetPlayer.tankPosition)}
             </span>
           </div>
         </section>
@@ -383,7 +387,7 @@ function AimControls({
             <p className="eyebrow">Aim</p>
             <strong>{activePlayer.name} 조준</strong>
             <span className="aim-coordinate">
-              ({input.vertexX}, {input.vertexY})
+              {formatPoint({ x: input.vertexX, y: input.vertexY })}
             </span>
           </div>
         </div>
@@ -402,7 +406,7 @@ function AimControls({
         <RangeControl
           label="꼭짓점 y"
           max={BOARD.yMax}
-          min={1}
+          min={COORDINATE_STEP}
           value={input.vertexY}
           onChange={(value) =>
             onInputChange((current) => ({
@@ -419,7 +423,9 @@ function AimControls({
       <div className="move-console" aria-label="탱크 이동">
         <div>
           <p className="eyebrow">Move</p>
-          <strong>남은 이동 {remainingMove}/3</strong>
+          <strong>
+            남은 이동 {formatCoordinate(remainingMove)}/{formatCoordinate(MAX_TURN_MOVE)}
+          </strong>
           <small>{moveStatus}</small>
         </div>
         <div className="move-buttons">
@@ -481,7 +487,11 @@ function getMoveStatus(game: GameState, remainingMove: number): string {
     return "이동할 공간 없음";
   }
 
-  return "발사 전 좌우 이동 가능";
+  return `발사 전 좌우 ${formatCoordinate(MOVE_STEP)}칸 이동 가능`;
+}
+
+function formatPoint(point: Point): string {
+  return `(${formatCoordinate(point.x)}, ${formatCoordinate(point.y)})`;
 }
 
 function RangeControl({
@@ -501,16 +511,16 @@ function RangeControl({
     <label className="range-control">
       <span>
         {label}
-        <strong>{value}</strong>
+        <strong>{formatCoordinate(value)}</strong>
       </span>
       <input
         max={max}
         min={min}
-        step="1"
+        step={COORDINATE_STEP}
         type="range"
         value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-        onInput={(event) => onChange(Number(event.currentTarget.value))}
+        onChange={(event) => onChange(roundToStep(Number(event.target.value)))}
+        onInput={(event) => onChange(roundToStep(Number(event.currentTarget.value)))}
       />
     </label>
   );
@@ -521,9 +531,7 @@ function ShotToast({ result, vertex }: { result: ShotResult | null; vertex: Poin
     return (
       <div className="shot-toast is-aiming" aria-live="polite">
         <span>조준점</span>
-        <strong>
-          ({vertex.x}, {vertex.y})
-        </strong>
+        <strong>{formatPoint(vertex)}</strong>
       </div>
     );
   }
@@ -550,7 +558,7 @@ function ShotToast({ result, vertex }: { result: ShotResult | null; vertex: Poin
       <span>{label}</span>
       <strong>{detail}</strong>
       <small>
-        착탄점 ({round(result.impactPoint.x)}, {round(result.impactPoint.y)})
+        착탄점 {formatPoint(result.impactPoint)}
       </small>
     </div>
   );
@@ -571,13 +579,11 @@ function ResultDetailsModal({ result, onClose }: { result: ShotResult; onClose: 
           </div>
           <div>
             <dt>착탄점</dt>
-            <dd>
-              ({round(result.impactPoint.x)}, {round(result.impactPoint.y)})
-            </dd>
+            <dd>{formatPoint(result.impactPoint)}</dd>
           </div>
           <div>
             <dt>거리</dt>
-            <dd>{round(result.distanceToTarget)}칸</dd>
+            <dd>{formatCoordinate(result.distanceToTarget)}칸</dd>
           </div>
           <div>
             <dt>피해</dt>
@@ -615,8 +621,7 @@ function HistoryPopover({ history, onClose }: { history: ShotResult[]; onClose: 
                   <span>피해 {shot.damage}</span>
                 </div>
                 <p>
-                  꼭짓점 ({shot.vertex.x}, {shot.vertex.y}), 착탄점 (
-                  {round(shot.impactPoint.x)}, {round(shot.impactPoint.y)})
+                  꼭짓점 {formatPoint(shot.vertex)}, 착탄점 {formatPoint(shot.impactPoint)}
                 </p>
               </article>
             ))
@@ -1026,9 +1031,20 @@ function drawBoard(
   ctx.fillRect(0, 0, width, height);
 
   drawGrid(ctx, rc, width, height, margin, toScreen);
+  const shotShooterPosition =
+    game.players.find((player) => player.id === visibleShot.shooterId)?.tankPosition ??
+    getActivePlayer(game).tankPosition;
 
   if (hasFiredShot && visibleShot.isValidImpact) {
-    drawTrajectory(ctx, toScreen, visibleShot, "#2f855a", false, animationProgress);
+    drawTrajectory(
+      ctx,
+      toScreen,
+      visibleShot,
+      shotShooterPosition,
+      "#2f855a",
+      false,
+      animationProgress,
+    );
     drawBlast(rc, toScreen, visibleShot);
   }
 
@@ -1038,7 +1054,7 @@ function drawBoard(
 
   drawVertex(ctx, rc, toScreen, previewShot.vertex);
   if (hasFiredShot) {
-    drawShell(rc, toScreen, visibleShot, animationProgress);
+    drawShell(rc, toScreen, visibleShot, shotShooterPosition, animationProgress);
   }
 }
 
@@ -1109,6 +1125,7 @@ function drawTrajectory(
   ctx: CanvasRenderingContext2D,
   toScreen: (point: Point) => ScreenPoint,
   shot: ShotResult,
+  shooterPosition: Point,
   color: string,
   dashed: boolean,
   progress = 1,
@@ -1117,7 +1134,7 @@ function drawTrajectory(
     return;
   }
 
-  const start = shot.shooterId === "p1" ? -8 : 8;
+  const start = shooterPosition.x;
   const end = shot.impactPoint.x;
   const steps = 90;
   const safeProgress = Math.max(0.04, progress);
@@ -1230,13 +1247,14 @@ function drawShell(
   rc: ReturnType<typeof rough.canvas>,
   toScreen: (point: Point) => ScreenPoint,
   shot: ShotResult,
+  shooterPosition: Point,
   progress: number,
 ) {
   if (!shot.isValidImpact || !Number.isFinite(shot.quadratic.a)) {
     return;
   }
 
-  const startX = shot.shooterId === "p1" ? -8 : 8;
+  const startX = shooterPosition.x;
   const x = startX + (shot.impactPoint.x - startX) * progress;
   const y = getYAtX(shot.quadratic, x);
   const screen = toScreen({ x, y });

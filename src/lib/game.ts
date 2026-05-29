@@ -4,8 +4,11 @@ import {
   MAX_DAMAGE,
   STARTING_HP,
   calculateShotMath,
+  formatCoordinate,
   formatEquation,
+  nearlyEqual,
   round,
+  roundToStep,
   type Point,
   type Quadratic,
 } from "./math";
@@ -51,6 +54,7 @@ export type GameState = {
 };
 
 export const MAX_TURN_MOVE = 3;
+export const MOVE_STEP = 0.1;
 
 export function createInitialGameState(): GameState {
   return {
@@ -155,19 +159,23 @@ export function submitShot(state: GameState, input: ShotInput): GameState {
 }
 
 export function getRemainingMove(state: GameState): number {
-  return Math.max(0, MAX_TURN_MOVE - state.movementUsed);
+  return roundToStep(Math.max(0, MAX_TURN_MOVE - state.movementUsed));
 }
 
 export function canMoveActivePlayer(state: GameState, direction: MoveDirection): boolean {
-  if (state.winnerId || getRemainingMove(state) <= 0) {
+  if (state.winnerId || getRemainingMove(state) < MOVE_STEP) {
     return false;
   }
 
   const activePlayer = getActivePlayer(state);
   const targetPlayer = getTargetPlayer(state);
-  const nextX = activePlayer.tankPosition.x + direction;
+  const nextX = roundToStep(activePlayer.tankPosition.x + direction * MOVE_STEP);
 
-  return nextX >= BOARD.xMin && nextX <= BOARD.xMax && nextX !== targetPlayer.tankPosition.x;
+  return (
+    nextX >= BOARD.xMin &&
+    nextX <= BOARD.xMax &&
+    !nearlyEqual(nextX, targetPlayer.tankPosition.x)
+  );
 }
 
 export function moveActivePlayer(state: GameState, direction: MoveDirection): GameState {
@@ -185,7 +193,7 @@ export function moveActivePlayer(state: GameState, direction: MoveDirection): Ga
       ...player,
       tankPosition: {
         ...player.tankPosition,
-        x: player.tankPosition.x + direction,
+        x: roundToStep(player.tankPosition.x + direction * MOVE_STEP),
       },
     };
   }) as [Player, Player];
@@ -193,7 +201,7 @@ export function moveActivePlayer(state: GameState, direction: MoveDirection): Ga
   return {
     ...state,
     players: nextPlayers,
-    movementUsed: state.movementUsed + 1,
+    movementUsed: roundToStep(Math.min(MAX_TURN_MOVE, state.movementUsed + MOVE_STEP)),
     lastShot: null,
   };
 }
@@ -209,21 +217,25 @@ function buildExplanation(
   }
 
   const a = round(result.quadratic.a, 3);
-  const distanceToTarget = round(result.distanceToTarget, 2);
-  const impactX = round(result.impactPoint.x, 2);
-  const impactY = round(result.impactPoint.y, 2);
+  const distanceToTarget = formatCoordinate(result.distanceToTarget);
+  const impactX = formatCoordinate(result.impactPoint.x);
+  const impactY = formatCoordinate(result.impactPoint.y);
   const validity = result.isValidImpact
     ? "착탄점이 전장 안에 있어 폭발 피해를 계산합니다."
     : "착탄점이 전장 밖이거나 반대 방향이라 피해가 없습니다.";
 
   return [
-    `${shooter.name} 탱크 (${shooter.tankPosition.x}, ${shooter.tankPosition.y})와 꼭짓점 (${vertex.x}, ${vertex.y})로 a = (0 - ${vertex.y}) / (${shooter.tankPosition.x} - ${vertex.x})² = ${a} 입니다.`,
+    `${shooter.name} 탱크 ${formatPoint(shooter.tankPosition)}와 꼭짓점 ${formatPoint(vertex)}로 a = (0 - ${formatCoordinate(vertex.y)}) / (${formatCoordinate(shooter.tankPosition.x)} - ${formatCoordinate(vertex.x)})² = ${a} 입니다.`,
     `포탄 궤적은 ${formatEquation(result.quadratic)} 입니다.`,
     `지면과 다시 만나는 착탄점은 (${impactX}, ${impactY}) 입니다.`,
     `폭발 범위는 (x - ${impactX})² + (y - ${impactY})² ≤ ${BLAST_RADIUS ** 2} 입니다.`,
     `${target.name} 중심까지 거리는 ${distanceToTarget}이고, 피해는 round(${MAX_DAMAGE} × (1 - ${distanceToTarget} / ${BLAST_RADIUS})) = ${result.damage} 입니다.`,
     validity,
   ];
+}
+
+function formatPoint(point: Point): string {
+  return `(${formatCoordinate(point.x)}, ${formatCoordinate(point.y)})`;
 }
 
 export function createPreviewShot(state: GameState, input: ShotInput): ShotResult {
