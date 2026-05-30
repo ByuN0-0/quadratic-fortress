@@ -67,10 +67,13 @@ type ScreenPoint = {
 };
 
 type DisplayHpByPlayer = Record<PlayerId, number>;
+type AimInputByPlayer = Record<PlayerId, ShotInput>;
 
 export default function QuadraticFortress() {
   const [game, setGame] = useState<GameState>(() => createInitialGameState());
-  const [input, setInput] = useState<ShotInput>(DEFAULT_INPUT);
+  const [aimInputByPlayer, setAimInputByPlayer] = useState<AimInputByPlayer>(() =>
+    createInitialAimInputByPlayer(),
+  );
   const [tutorial, setTutorial] = useState<TutorialState>(() => createInitialTutorialState(true));
   const [animationProgress, setAnimationProgress] = useState(1);
   const [isResultOpen, setIsResultOpen] = useState(false);
@@ -88,7 +91,8 @@ export default function QuadraticFortress() {
 
   const activePlayer = getActivePlayer(game);
   const targetPlayer = getTargetPlayer(game);
-  const previewShot = useMemo(() => createPreviewShot(game, input), [game, input]);
+  const activeInput = aimInputByPlayer[game.activePlayerId];
+  const previewShot = useMemo(() => createPreviewShot(game, activeInput), [game, activeInput]);
   const visibleShot = game.lastShot ?? previewShot;
 
   useEffect(() => {
@@ -242,8 +246,20 @@ export default function QuadraticFortress() {
       return;
     }
 
-    setGame((current) => prepareShot(current, input));
+    setGame((current) => prepareShot(current, aimInputByPlayer[current.activePlayerId]));
     setIsResultOpen(false);
+  };
+
+  const updateActiveInput = (nextInput: ShotInput | ((current: ShotInput) => ShotInput)) => {
+    setAimInputByPlayer((current) => {
+      const playerInput = current[game.activePlayerId];
+      const resolvedInput = typeof nextInput === "function" ? nextInput(playerInput) : nextInput;
+
+      return {
+        ...current,
+        [game.activePlayerId]: resolvedInput,
+      };
+    });
   };
 
   const moveTank = (direction: MoveDirection) => {
@@ -264,7 +280,7 @@ export default function QuadraticFortress() {
     }
 
     setGame(createInitialGameState());
-    setInput(DEFAULT_INPUT);
+    setAimInputByPlayer(createInitialAimInputByPlayer());
     setAnimationProgress(1);
     setIsResultOpen(false);
     setIsHistoryOpen(false);
@@ -360,11 +376,11 @@ export default function QuadraticFortress() {
 
         <AimControls
           game={game}
-          input={input}
+          input={activeInput}
           isShotAnimating={isShotAnimating}
           onFire={fire}
           onHistory={() => setIsHistoryOpen(true)}
-          onInputChange={setInput}
+          onInputChange={updateActiveInput}
           onMove={moveTank}
           onResult={() => setIsResultOpen(true)}
           onTrajectoryPreviewChange={setIsTrajectoryPreviewOn}
@@ -628,6 +644,13 @@ function createDisplayHpByPlayer(players: GameState["players"]): DisplayHpByPlay
     },
     { p1: STARTING_HP, p2: STARTING_HP } as DisplayHpByPlayer,
   );
+}
+
+function createInitialAimInputByPlayer(): AimInputByPlayer {
+  return {
+    p1: { ...DEFAULT_INPUT },
+    p2: { ...DEFAULT_INPUT },
+  };
 }
 
 function RangeControl({
@@ -1417,6 +1440,7 @@ function drawBlast(
     stroke: shot.damage > 0 ? "#dc2626" : "#7c7f84",
     strokeWidth: 2,
     roughness: 1.5,
+    seed: 10_000 + shot.id,
     fill: shot.damage > 0 ? "rgba(248, 113, 113, 0.18)" : "rgba(156, 163, 175, 0.16)",
     fillStyle: "solid",
   });
