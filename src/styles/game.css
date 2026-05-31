@@ -15,6 +15,81 @@
   align-content: start;
 }
 
+.mode-menu-screen {
+  align-content: start;
+}
+
+.mode-menu-panel {
+  display: grid;
+  gap: 18px;
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: 22px;
+  border: 2px solid #202124;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 3px 3px 0 #202124;
+}
+
+.mode-menu-panel h2 {
+  margin: 0;
+  color: #1f2933;
+  font-size: clamp(1.25rem, 2vw, 1.7rem);
+  line-height: 1.18;
+}
+
+.mode-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mode-choice-button {
+  display: grid;
+  gap: 8px;
+  min-height: 132px;
+  padding: 16px;
+  border: 2px solid #202124;
+  border-radius: 8px;
+  background: #ecfdf5;
+  color: #111827;
+  box-shadow: 2px 2px 0 #202124;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mode-choice-button.is-danger {
+  background: #eff6ff;
+}
+
+.mode-choice-button strong {
+  font-size: 1.1rem;
+  font-weight: 900;
+}
+
+.mode-choice-button span {
+  color: #374151;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.mode-label {
+  display: inline-flex;
+  width: fit-content;
+  margin: 8px 0 0;
+  padding: 3px 9px;
+  border: 2px solid #202124;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #111827;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.mode-label.mode-ocean {
+  background: #eff6ff;
+}
+
 .game-topbar {
   display: flex;
   align-items: center;
@@ -1013,5 +1088,9 @@
   .tutorial-actions .primary-button,
   .tutorial-actions .secondary-button {
     width: 100%;
+  }
+
+  .mode-choice-grid {
+    grid-template-columns: 1fr;
   }
 }

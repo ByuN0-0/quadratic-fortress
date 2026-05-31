@@ -17,12 +17,16 @@ import {
   createInitialTerrain,
   destroyTerrain,
   findProjectileTerrainImpact,
+  findSupportAtX,
   findSupportY,
+  OCEAN_FALL_Y,
   settlePlayersOnTerrain,
+  type TerrainMapId,
   type TerrainState,
 } from "./terrain";
 
 export type PlayerId = "p1" | "p2";
+export type GameMode = "normal" | "ocean";
 
 export type Player = {
   id: PlayerId;
@@ -64,6 +68,8 @@ export type GameState = {
   shotHistory: ShotResult[];
   lastShot: ShotResult | null;
   terrain: TerrainState;
+  mode: GameMode;
+  mapId: TerrainMapId;
   winnerId: PlayerId | null;
 };
 
@@ -71,9 +77,13 @@ export const MAX_TURN_MOVE = 3;
 export const MOVE_STEP = 0.1;
 export const PLAYER_START_HEIGHT = BOARD.yMax;
 export const PROJECTILE_TERRAIN_ARM_DISTANCE = 0.7;
+export const MAX_TANK_TERRAIN_SLOPE = 1;
 
-export function createInitialGameState(): GameState {
-  const terrain = createInitialTerrain();
+export function createInitialGameState(
+  mode: GameMode = "normal",
+  mapId: TerrainMapId = "map1",
+): GameState {
+  const terrain = createInitialTerrain(mapId);
   const p1StartX = -8;
   const p2StartX = 8;
 
@@ -105,6 +115,8 @@ export function createInitialGameState(): GameState {
     shotHistory: [],
     lastShot: null,
     terrain,
+    mode,
+    mapId,
     winnerId: null,
   };
 }
@@ -207,15 +219,26 @@ export function applyLastShot(state: GameState): GameState {
   const nextTerrain = result.isValidImpact
     ? destroyTerrain(state.terrain, result.impactPoint, result.projectile.blastRadius)
     : state.terrain;
-  const nextPlayers = settlePlayersOnTerrain(damagedPlayers, nextTerrain);
-
-  const winnerId = nextPlayers.find((player) => player.hp <= 0)
-    ? result.shooterId
+  const hasBaseTerrain = state.mode === "normal";
+  const nextPlayers = settlePlayersOnTerrain(damagedPlayers, nextTerrain, hasBaseTerrain);
+  const fallenPlayer = state.mode === "ocean"
+    ? nextPlayers.find((player) => player.tankPosition.y <= OCEAN_FALL_Y)
     : null;
+  const resolvedPlayers = fallenPlayer
+    ? nextPlayers.map((player) =>
+        player.id === fallenPlayer.id ? { ...player, hp: 0 } : player,
+      ) as [Player, Player]
+    : nextPlayers;
+
+  const winnerId = fallenPlayer
+    ? getOpponentId(fallenPlayer.id)
+    : resolvedPlayers.find((player) => player.hp <= 0)
+      ? result.shooterId
+      : null;
 
   if (winnerId) {
     return {
-      players: nextPlayers.map((player) => ({ ...player, isActive: player.id === winnerId })) as [
+      players: resolvedPlayers.map((player) => ({ ...player, isActive: player.id === winnerId })) as [
         Player,
         Player,
       ],
@@ -224,17 +247,21 @@ export function applyLastShot(state: GameState): GameState {
       shotHistory: [appliedResult, ...state.shotHistory],
       lastShot: appliedResult,
       terrain: nextTerrain,
+      mode: state.mode,
+      mapId: state.mapId,
       winnerId,
     };
   }
 
   return {
-    players: nextPlayers,
+    players: resolvedPlayers,
     activePlayerId: result.targetId,
     movementUsed: 0,
     shotHistory: [appliedResult, ...state.shotHistory],
     lastShot: appliedResult,
     terrain: nextTerrain,
+    mode: state.mode,
+    mapId: state.mapId,
     winnerId: null,
   };
 }
@@ -251,11 +278,24 @@ export function canMoveActivePlayer(state: GameState, direction: MoveDirection):
   const activePlayer = getActivePlayer(state);
   const targetPlayer = getTargetPlayer(state);
   const nextX = roundToStep(activePlayer.tankPosition.x + direction * MOVE_STEP);
+  const currentSupport = findReachableTankSupport(
+    state,
+    activePlayer.tankPosition.x,
+    activePlayer.tankPosition.y,
+  );
+  const nextSupport = findReachableTankSupport(state, nextX, activePlayer.tankPosition.y);
+  const canStandOnNextSupport =
+    nextSupport !== null;
+  const nextSlope = nextSupport?.slope ?? 0;
 
   return (
     nextX >= BOARD.xMin &&
     nextX <= BOARD.xMax &&
-    !nearlyEqual(nextX, targetPlayer.tankPosition.x)
+    !nearlyEqual(nextX, targetPlayer.tankPosition.x) &&
+    canStandOnNextSupport &&
+    currentSupport !== null &&
+    Math.abs(currentSupport.slope) <= MAX_TANK_TERRAIN_SLOPE &&
+    Math.abs(nextSlope) <= MAX_TANK_TERRAIN_SLOPE
   );
 }
 
@@ -266,6 +306,7 @@ export function moveActivePlayer(state: GameState, direction: MoveDirection): Ga
 
   const activePlayer = getActivePlayer(state);
   const nextX = roundToStep(activePlayer.tankPosition.x + direction * MOVE_STEP);
+  const nextSupport = findReachableTankSupport(state, nextX, activePlayer.tankPosition.y);
   const nextPlayers = state.players.map((player) => {
     if (player.id !== activePlayer.id) {
       return player;
@@ -276,7 +317,7 @@ export function moveActivePlayer(state: GameState, direction: MoveDirection): Ga
       tankPosition: {
         ...player.tankPosition,
         x: roundToStep(player.tankPosition.x + direction * MOVE_STEP),
-        y: findSupportY(nextX, PLAYER_START_HEIGHT, state.terrain),
+        y: nextSupport?.y ?? (state.mode === "normal" ? BOARD.yMin : OCEAN_FALL_Y),
       },
     };
   }) as [Player, Player];
@@ -366,6 +407,19 @@ export function createPreviewShot(state: GameState, input: ShotInput): ShotResul
     isApplied: false,
     terrainImpactBlockId: terrainImpact?.blockId ?? null,
   };
+}
+
+function getOpponentId(playerId: PlayerId): PlayerId {
+  return playerId === "p1" ? "p2" : "p1";
+}
+
+function findReachableTankSupport(
+  state: GameState,
+  x: number,
+  currentY: number,
+): { y: number; slope: number } | null {
+  const maxReachY = currentY + MAX_TANK_TERRAIN_SLOPE * MOVE_STEP;
+  return findSupportAtX(x, maxReachY, state.terrain) ?? (state.mode === "normal" ? { y: BOARD.yMin, slope: 0 } : null);
 }
 
 export function isVertexInsideBoard(input: ShotInput): boolean {

@@ -28,13 +28,28 @@ export type TerrainSegment = {
 export type TerrainState = {
   blocks: TerrainBlock[];
   segments: TerrainSegment[];
+  holes: TerrainHole[];
+};
+
+export type TerrainMapId = "map1" | "map2" | "map3";
+
+export type TerrainHole = {
+  id: string;
+  x: number;
+  y: number;
+  radius: number;
 };
 
 export const AIR_TERRAIN_HEIGHT = 0.5;
 export const SUPPORT_TOLERANCE = 0.08;
+export const OCEAN_FALL_Y = -1;
+export const TERRAIN_MAP_IDS: TerrainMapId[] = ["map1", "map2", "map3"];
 
-export function createInitialTerrain(): TerrainState {
-  return {
+const INITIAL_TERRAIN_BY_MAP: Record<
+  TerrainMapId,
+  { blocks: TerrainBlock[]; segments: TerrainSegment[] }
+> = {
+  map1: {
     blocks: [
       { id: "air-left", x: -9.2, y: 2, width: 2.4, height: AIR_TERRAIN_HEIGHT },
       { id: "air-center", x: -1.5, y: 4, width: 3, height: AIR_TERRAIN_HEIGHT },
@@ -44,7 +59,45 @@ export function createInitialTerrain(): TerrainState {
       { id: "slope-up-left", x1: -6.8, y1: 2.5, x2: -1.5, y2: 4.5 },
       { id: "slope-down-right", x1: 1.5, y1: 4.5, x2: 6.8, y2: 2.5 },
     ],
+  },
+  map2: {
+    blocks: [
+      { id: "map2-left", x: -9, y: 1.5, width: 2.8, height: AIR_TERRAIN_HEIGHT },
+      { id: "map2-mid-left", x: -3.5, y: 3, width: 2, height: AIR_TERRAIN_HEIGHT },
+      { id: "map2-mid-right", x: 1.5, y: 3, width: 2, height: AIR_TERRAIN_HEIGHT },
+      { id: "map2-right", x: 6.2, y: 1.5, width: 2.8, height: AIR_TERRAIN_HEIGHT },
+    ],
+    segments: [
+      { id: "map2-slope-left", x1: -6.2, y1: 2, x2: -3.5, y2: 3.5 },
+      { id: "map2-slope-center", x1: -1.5, y1: 3.5, x2: 1.5, y2: 3.5 },
+      { id: "map2-slope-right", x1: 3.5, y1: 3.5, x2: 6.2, y2: 2 },
+    ],
+  },
+  map3: {
+    blocks: [
+      { id: "map3-left", x: -9.2, y: 2.5, width: 2.4, height: AIR_TERRAIN_HEIGHT },
+      { id: "map3-center", x: -2.2, y: 5, width: 4.4, height: AIR_TERRAIN_HEIGHT },
+      { id: "map3-right", x: 6.8, y: 2.5, width: 2.4, height: AIR_TERRAIN_HEIGHT },
+    ],
+    segments: [
+      { id: "map3-left-rise", x1: -6.8, y1: 3, x2: -2.2, y2: 5.5 },
+      { id: "map3-right-drop", x1: 2.2, y1: 5.5, x2: 6.8, y2: 3 },
+    ],
+  },
+};
+
+export function createInitialTerrain(mapId: TerrainMapId = "map1"): TerrainState {
+  const terrain = INITIAL_TERRAIN_BY_MAP[mapId] ?? INITIAL_TERRAIN_BY_MAP.map1;
+
+  return {
+    blocks: terrain.blocks.map((block) => ({ ...block })),
+    segments: terrain.segments.map((segment) => ({ ...segment })),
+    holes: [],
   };
+}
+
+export function getTerrainMapLabel(mapId: TerrainMapId): string {
+  return `맵${TERRAIN_MAP_IDS.indexOf(mapId) + 1}`;
 }
 
 export function findProjectileTerrainImpact(
@@ -58,7 +111,8 @@ export function findProjectileTerrainImpact(
     return null;
   }
 
-  const { blocks, segments } = normalizeTerrain(terrain);
+  const normalizedTerrain = normalizeTerrain(terrain);
+  const { blocks, segments, holes } = normalizedTerrain;
   const distanceX = groundImpact.x - shooter.x;
   const steps = Math.max(1, Math.ceil(Math.abs(distanceX) / 0.02));
 
@@ -72,8 +126,13 @@ export function findProjectileTerrainImpact(
       continue;
     }
 
-    const hitBlock = blocks.find((block) => isPointInsideBlock({ x, y }, block));
-    const hitSegment = segments.find((segment) => isPointOnSegment({ x, y }, segment));
+    const point = { x, y };
+    const hitBlock = blocks.find(
+      (block) => isPointInsideBlock(point, block) && !isPointInsideAnyHole(point, holes),
+    );
+    const hitSegment = segments.find(
+      (segment) => isPointInsideSegmentBody(point, segment) && !isPointInsideAnyHole(point, holes),
+    );
 
     if (hitBlock) {
       return {
@@ -106,20 +165,34 @@ export function destroyTerrain(
   center: Point,
   radius: number,
 ): TerrainState {
+  if (!doesBlastTouchTerrain(terrain, center, radius)) {
+    return terrain;
+  }
+
   return {
-    blocks: destroyTerrainBlocks(terrain.blocks, center, radius),
-    segments: terrain.segments.flatMap((segment) => splitSegmentByBlast(segment, center, radius)),
+    ...terrain,
+    holes: [
+      ...terrain.holes,
+      {
+        id: `blast-${terrain.holes.length + 1}`,
+        x: round(center.x, 2),
+        y: round(center.y, 2),
+        radius,
+      },
+    ],
   };
 }
 
 export function settlePlayersOnTerrain(
   players: [Player, Player],
   terrain: TerrainState | TerrainBlock[],
+  hasBaseTerrain = true,
 ): [Player, Player] {
   const normalizedTerrain = normalizeTerrain(terrain);
 
   return players.map((player) => {
-    if (isPlayerSupported(player.tankPosition, normalizedTerrain)) {
+    const supportY = findSupportYOrNull(player.tankPosition.x, player.tankPosition.y, normalizedTerrain);
+    if (supportY !== null && Math.abs(player.tankPosition.y - supportY) <= SUPPORT_TOLERANCE) {
       return player;
     }
 
@@ -127,7 +200,7 @@ export function settlePlayersOnTerrain(
       ...player,
       tankPosition: {
         ...player.tankPosition,
-        y: findSupportY(player.tankPosition.x, player.tankPosition.y, normalizedTerrain),
+        y: supportY ?? (hasBaseTerrain ? BOARD.yMin : OCEAN_FALL_Y),
       },
     };
   }) as [Player, Player];
@@ -138,21 +211,62 @@ export function findSupportY(
   fromY: number,
   terrain: TerrainState | TerrainBlock[],
 ): number {
-  const { blocks, segments } = normalizeTerrain(terrain);
+  return findSupportYOrNull(x, fromY, terrain) ?? BOARD.yMin;
+}
+
+export function findSupportYOrNull(
+  x: number,
+  fromY: number,
+  terrain: TerrainState | TerrainBlock[],
+): number | null {
+  const normalizedTerrain = normalizeTerrain(terrain);
+  const { blocks, segments, holes } = normalizedTerrain;
   const blockY = blocks
     .filter((block) => blockCoversX(block, x))
     .map((block) => block.y + block.height)
+    .filter((topY) => !isPointInsideAnyHole({ x, y: topY }, holes))
     .filter((topY) => topY <= fromY + SUPPORT_TOLERANCE);
   const segmentY = segments
     .filter((segment) => segmentCoversX(segment, x))
     .map((segment) => getSegmentYAtX(segment, x))
+    .filter((y) => !isPointInsideAnyHole({ x, y }, holes))
     .filter((y) => y <= fromY + SUPPORT_TOLERANCE);
-  const platformY = [...blockY, ...segmentY].reduce(
-    (highest, topY) => Math.max(highest, topY),
-    BOARD.yMin,
-  );
+  const supports = [...blockY, ...segmentY];
+  if (supports.length === 0) {
+    return null;
+  }
+
+  const platformY = supports.reduce((highest, topY) => Math.max(highest, topY), -Infinity);
 
   return round(platformY, 2);
+}
+
+export function findSupportAtX(
+  x: number,
+  fromY: number,
+  terrain: TerrainState | TerrainBlock[],
+): { y: number; slope: number } | null {
+  const normalizedTerrain = normalizeTerrain(terrain);
+  const blockSupports = normalizedTerrain.blocks
+    .filter((block) => blockCoversX(block, x))
+    .map((block) => ({ y: block.y + block.height, slope: 0 }))
+    .filter((support) => !isPointInsideAnyHole({ x, y: support.y }, normalizedTerrain.holes))
+    .filter((support) => support.y <= fromY + SUPPORT_TOLERANCE);
+  const segmentSupports = normalizedTerrain.segments
+    .filter((segment) => segmentCoversX(segment, x))
+    .map((segment) => ({ y: getSegmentYAtX(segment, x), slope: getSegmentSlope(segment) }))
+    .filter((support) => !isPointInsideAnyHole({ x, y: support.y }, normalizedTerrain.holes))
+    .filter((support) => support.y <= fromY + SUPPORT_TOLERANCE);
+  const supports = [...blockSupports, ...segmentSupports];
+
+  if (supports.length === 0) {
+    return null;
+  }
+
+  return supports.reduce((highest, support) => (support.y > highest.y ? support : highest), {
+    y: -Infinity,
+    slope: 0,
+  });
 }
 
 export function isPlayerSupported(
@@ -169,6 +283,14 @@ export function getSegmentYAtX(segment: TerrainSegment, x: number): number {
 
   const progress = (x - segment.x1) / (segment.x2 - segment.x1);
   return segment.y1 + (segment.y2 - segment.y1) * progress;
+}
+
+export function getSegmentSlope(segment: TerrainSegment): number {
+  if (Math.abs(segment.x2 - segment.x1) <= FLOAT_EPSILON) {
+    return Infinity;
+  }
+
+  return (segment.y2 - segment.y1) / (segment.x2 - segment.x1);
 }
 
 function splitBlockByBlast(block: TerrainBlock, center: Point, radius: number): TerrainBlock[] {
@@ -211,61 +333,6 @@ function splitBlockByBlast(block: TerrainBlock, center: Point, radius: number): 
   return nextBlocks;
 }
 
-function splitSegmentByBlast(
-  segment: TerrainSegment,
-  center: Point,
-  radius: number,
-): TerrainSegment[] {
-  const dx = segment.x2 - segment.x1;
-  const dy = segment.y2 - segment.y1;
-  const fx = segment.x1 - center.x;
-  const fy = segment.y1 - center.y;
-  const a = dx ** 2 + dy ** 2;
-  const b = 2 * (fx * dx + fy * dy);
-  const c = fx ** 2 + fy ** 2 - radius ** 2;
-  const discriminant = b ** 2 - 4 * a * c;
-
-  if (a <= FLOAT_EPSILON || discriminant <= 0) {
-    return c <= 0 ? [] : [segment];
-  }
-
-  const sqrtDiscriminant = Math.sqrt(discriminant);
-  const t1 = (-b - sqrtDiscriminant) / (2 * a);
-  const t2 = (-b + sqrtDiscriminant) / (2 * a);
-  const removeStart = Math.max(0, Math.min(t1, t2));
-  const removeEnd = Math.min(1, Math.max(t1, t2));
-
-  if (removeStart >= 1 || removeEnd <= 0 || removeStart >= removeEnd) {
-    return [segment];
-  }
-
-  const nextSegments: TerrainSegment[] = [];
-  if (removeStart > FLOAT_EPSILON) {
-    nextSegments.push(createSegmentSlice(segment, 0, removeStart, `${segment.id}-l`));
-  }
-
-  if (removeEnd < 1 - FLOAT_EPSILON) {
-    nextSegments.push(createSegmentSlice(segment, removeEnd, 1, `${segment.id}-r`));
-  }
-
-  return nextSegments;
-}
-
-function createSegmentSlice(
-  segment: TerrainSegment,
-  fromT: number,
-  toT: number,
-  id: string,
-): TerrainSegment {
-  return {
-    id,
-    x1: round(segment.x1 + (segment.x2 - segment.x1) * fromT, 2),
-    y1: round(segment.y1 + (segment.y2 - segment.y1) * fromT, 2),
-    x2: round(segment.x1 + (segment.x2 - segment.x1) * toT, 2),
-    y2: round(segment.y1 + (segment.y2 - segment.y1) * toT, 2),
-  };
-}
-
 function isPointInsideBlock(point: Point, block: TerrainBlock): boolean {
   return (
     point.x >= block.x - FLOAT_EPSILON &&
@@ -284,6 +351,7 @@ function normalizeTerrain(terrain: TerrainState | TerrainBlock[]): TerrainState 
     ? {
         blocks: terrain,
         segments: [],
+        holes: [],
       }
     : terrain;
 }
@@ -294,10 +362,71 @@ function segmentCoversX(segment: TerrainSegment, x: number): boolean {
   return x >= minX - FLOAT_EPSILON && x <= maxX + FLOAT_EPSILON;
 }
 
-function isPointOnSegment(point: Point, segment: TerrainSegment): boolean {
+function isPointInsideSegmentBody(point: Point, segment: TerrainSegment): boolean {
   if (!segmentCoversX(segment, point.x)) {
     return false;
   }
 
-  return Math.abs(point.y - getSegmentYAtX(segment, point.x)) <= 0.05;
+  const topY = getSegmentYAtX(segment, point.x);
+  return point.y <= topY + FLOAT_EPSILON && point.y >= topY - AIR_TERRAIN_HEIGHT - FLOAT_EPSILON;
+}
+
+function isPointInsideAnyHole(point: Point, holes: TerrainHole[]): boolean {
+  return holes.some((hole) => Math.hypot(point.x - hole.x, point.y - hole.y) <= hole.radius);
+}
+
+function doesBlastTouchTerrain(terrain: TerrainState, center: Point, radius: number): boolean {
+  return (
+    terrain.blocks.some((block) => blockIntersectsCircle(block, center, radius)) ||
+    terrain.segments.some((segment) => segmentIntersectsCircle(segment, center, radius))
+  );
+}
+
+function blockIntersectsCircle(block: TerrainBlock, center: Point, radius: number): boolean {
+  const closestX = Math.max(block.x, Math.min(center.x, block.x + block.width));
+  const closestY = Math.max(block.y, Math.min(center.y, block.y + block.height));
+  return Math.hypot(center.x - closestX, center.y - closestY) <= radius;
+}
+
+function segmentIntersectsCircle(segment: TerrainSegment, center: Point, radius: number): boolean {
+  return (
+    segmentLineIntersectsCircle(segment.x1, segment.y1, segment.x2, segment.y2, center, radius) ||
+    segmentLineIntersectsCircle(
+      segment.x1,
+      segment.y1 - AIR_TERRAIN_HEIGHT,
+      segment.x2,
+      segment.y2 - AIR_TERRAIN_HEIGHT,
+      center,
+      radius,
+    ) ||
+    isPointInsideSegmentBody(center, segment)
+  );
+}
+
+function segmentLineIntersectsCircle(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  center: Point,
+  radius: number,
+): boolean {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lengthSquared = dx ** 2 + dy ** 2;
+
+  if (lengthSquared <= FLOAT_EPSILON) {
+    return Math.hypot(center.x - x1, center.y - y1) <= radius;
+  }
+
+  const t = Math.max(
+    0,
+    Math.min(1, ((center.x - x1) * dx + (center.y - y1) * dy) / lengthSquared),
+  );
+  const closest = {
+    x: x1 + dx * t,
+    y: y1 + dy * t,
+  };
+
+  return Math.hypot(center.x - closest.x, center.y - closest.y) <= radius;
 }

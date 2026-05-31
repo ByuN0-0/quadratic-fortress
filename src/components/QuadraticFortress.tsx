@@ -31,10 +31,16 @@ import {
   MOVE_STEP,
   type MoveDirection,
   type GameState,
+  type GameMode,
   type PlayerId,
   type ShotInput,
   type ShotResult,
 } from "../lib/game";
+import {
+  TERRAIN_MAP_IDS,
+  getTerrainMapLabel,
+  type TerrainMapId,
+} from "../lib/terrain";
 import {
   BLAST_RADIUS,
   BOARD,
@@ -76,6 +82,7 @@ type ScreenPoint = {
 };
 
 type CoordinateDisplayMode = "teacher" | "student";
+type ScreenMode = "menu" | "map" | "game";
 type DisplayHpByPlayer = Record<PlayerId, number>;
 type AimInputByPlayer = Record<PlayerId, ShotInput>;
 type Players = GameState["players"];
@@ -86,6 +93,8 @@ export default function QuadraticFortress() {
     createInitialAimInputByPlayer(),
   );
   const [tutorial, setTutorial] = useState<TutorialState>(() => createInitialTutorialState(true));
+  const [screenMode, setScreenMode] = useState<ScreenMode>("menu");
+  const [selectedMode, setSelectedMode] = useState<GameMode>("normal");
   const [animationProgress, setAnimationProgress] = useState(1);
   const [isResultOpen, setIsResultOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -118,6 +127,41 @@ export default function QuadraticFortress() {
   const previewShot = useMemo(() => createPreviewShot(game, activeInput), [game, activeInput]);
   const visibleShot = game.lastShot ?? previewShot;
   const isInteractionLocked = isShotAnimating || isFalling || isMoving;
+
+  const chooseMode = (mode: GameMode) => {
+    setSelectedMode(mode);
+    setScreenMode("map");
+  };
+
+  const startGame = (mode: GameMode, mapId: TerrainMapId) => {
+    if (frameRef.current) {
+      cancelAnimationFrame(frameRef.current);
+    }
+    if (fallFrameRef.current) {
+      cancelAnimationFrame(fallFrameRef.current);
+    }
+    if (moveFrameRef.current) {
+      cancelAnimationFrame(moveFrameRef.current);
+    }
+    if (hpFrameRef.current) {
+      cancelAnimationFrame(hpFrameRef.current);
+    }
+
+    const nextGame = createInitialGameState(mode, mapId);
+    setGame(nextGame);
+    setAimInputByPlayer(createInitialAimInputByPlayer());
+    setAnimationProgress(1);
+    setIsResultOpen(false);
+    setIsHistoryOpen(false);
+    setIsTrajectoryPreviewOn(false);
+    setIsShotAnimating(false);
+    setIsFalling(false);
+    setIsMoving(false);
+    setVisualPlayers(null);
+    displayHpRef.current = createDisplayHpByPlayer(nextGame.players);
+    setDisplayHpByPlayer(createDisplayHpByPlayer(nextGame.players));
+    setScreenMode("game");
+  };
 
   useEffect(() => {
     gameRef.current = game;
@@ -469,7 +513,8 @@ export default function QuadraticFortress() {
       cancelAnimationFrame(moveFrameRef.current);
     }
 
-    setGame(createInitialGameState());
+    const nextGame = createInitialGameState(game.mode, game.mapId);
+    setGame(nextGame);
     setAimInputByPlayer(createInitialAimInputByPlayer());
     setAnimationProgress(1);
     setIsResultOpen(false);
@@ -479,8 +524,9 @@ export default function QuadraticFortress() {
     setIsFalling(false);
     setIsMoving(false);
     setVisualPlayers(null);
-    displayHpRef.current = { p1: STARTING_HP, p2: STARTING_HP };
-    setDisplayHpByPlayer({ p1: STARTING_HP, p2: STARTING_HP });
+    displayHpRef.current = createDisplayHpByPlayer(nextGame.players);
+    setDisplayHpByPlayer(createDisplayHpByPlayer(nextGame.players));
+    setScreenMode("menu");
   };
 
   useEffect(() => {
@@ -543,12 +589,95 @@ export default function QuadraticFortress() {
     );
   }
 
+  if (screenMode === "menu") {
+    return (
+      <main className="game-shell mode-menu-screen">
+        <section className="game-topbar" aria-label="메인 화면">
+          <div>
+            <p className="eyebrow">Quadratic Fortress</p>
+            <h1>2차함수 포트리스</h1>
+          </div>
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            onClick={() => setTutorial((current) => openTutorial(current))}
+          >
+            튜토리얼
+          </button>
+        </section>
+
+        <section className="mode-menu-panel" aria-label="게임 모드 선택">
+          <div>
+            <p className="eyebrow">Game Mode</p>
+            <h2>수업 방식에 맞는 모드를 선택하세요</h2>
+          </div>
+          <div className="mode-choice-grid">
+            <button className="mode-choice-button" type="button" onClick={() => chooseMode("normal")}>
+              <strong>일반 모드 시작</strong>
+              <span>바닥은 안전하고 공중 지형만 파괴됩니다.</span>
+            </button>
+            <button
+              className="mode-choice-button is-danger"
+              type="button"
+              onClick={() => chooseMode("ocean")}
+            >
+              <strong>바다 모드 시작</strong>
+              <span>아래에 지형이 없으면 낙하 후 패배합니다.</span>
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (screenMode === "map") {
+    return (
+      <main className="game-shell mode-menu-screen">
+        <section className="game-topbar" aria-label="맵 선택 화면">
+          <div>
+            <p className="eyebrow">{getGameModeLabel(selectedMode)}</p>
+            <h1>맵 선택</h1>
+          </div>
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            onClick={() => setScreenMode("menu")}
+          >
+            뒤로
+          </button>
+        </section>
+
+        <section className="mode-menu-panel" aria-label="맵 선택">
+          <div>
+            <p className="eyebrow">Map</p>
+            <h2>플레이할 맵을 선택하세요</h2>
+          </div>
+          <div className="mode-choice-grid">
+            {TERRAIN_MAP_IDS.map((mapId) => (
+              <button
+                className="mode-choice-button"
+                key={mapId}
+                type="button"
+                onClick={() => startGame(selectedMode, mapId)}
+              >
+                <strong>{getTerrainMapLabel(mapId)}</strong>
+                <span>선택한 모드로 게임을 시작합니다.</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="game-shell">
       <section className="arena-layout" aria-label="게임 화면">
         <GameHud
           activePlayerId={game.activePlayerId}
           displayHpByPlayer={displayHpByPlayer}
+          mapId={game.mapId}
+          mode={game.mode}
           onReset={reset}
           onTutorial={() => setTutorial((current) => openTutorial(current))}
           players={game.players}
@@ -600,6 +729,8 @@ export default function QuadraticFortress() {
 function GameHud({
   activePlayerId,
   displayHpByPlayer,
+  mapId,
+  mode,
   onReset,
   onTutorial,
   players,
@@ -607,6 +738,8 @@ function GameHud({
 }: {
   activePlayerId: string;
   displayHpByPlayer: DisplayHpByPlayer;
+  mapId: TerrainMapId;
+  mode: GameMode;
   onReset: () => void;
   onTutorial: () => void;
   players: GameState["players"];
@@ -617,6 +750,7 @@ function GameHud({
       <div className="game-brand">
         <p className="eyebrow">Quadratic Fortress</p>
         <h1>2차함수 포트리스</h1>
+        <p className={`mode-label mode-${mode}`}>{getGameModeLabel(mode)} · {getTerrainMapLabel(mapId)}</p>
       </div>
       <div className="versus-hud">
         {players.map((player) => (
@@ -662,6 +796,10 @@ function GameHud({
       </div>
     </header>
   );
+}
+
+function getGameModeLabel(mode: GameMode): string {
+  return mode === "normal" ? "일반 모드" : "바다 모드";
 }
 
 function AimControls({
@@ -1487,25 +1625,28 @@ function drawBoard(
     top: 24,
     bottom: 46,
   };
+  const availableWidth = width - margin.left - margin.right;
+  const availableHeight = height - margin.top - margin.bottom;
+  const unit = Math.min(
+    availableWidth / (BOARD.xMax - BOARD.xMin),
+    availableHeight / (BOARD.yMax - BOARD.yMin),
+  );
+  const plotWidth = unit * (BOARD.xMax - BOARD.xMin);
+  const plotHeight = unit * (BOARD.yMax - BOARD.yMin);
+  const plotLeft = margin.left + (availableWidth - plotWidth) / 2;
+  const plotTop = margin.top + (availableHeight - plotHeight) / 2;
 
   const toScreen = (point: Point): ScreenPoint => ({
-    x:
-      margin.left +
-      ((point.x - BOARD.xMin) / (BOARD.xMax - BOARD.xMin)) *
-        (width - margin.left - margin.right),
-    y:
-      height -
-      margin.bottom -
-      ((point.y - BOARD.yMin) / (BOARD.yMax - BOARD.yMin)) *
-        (height - margin.top - margin.bottom),
+    x: plotLeft + (point.x - BOARD.xMin) * unit,
+    y: plotTop + (BOARD.yMax - point.y) * unit,
   });
 
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, width, height);
 
-  drawGrid(ctx, rc, width, height, margin, toScreen, coordinateDisplayMode);
-  drawTerrain(ctx, rc, toScreen, game.terrain);
+  drawGrid(ctx, rc, height, toScreen, coordinateDisplayMode);
+  drawTerrain(ctx, toScreen, game.terrain);
   const shotShooterPosition =
     game.players.find((player) => player.id === visibleShot.shooterId)?.tankPosition ??
     getActivePlayer(game).tankPosition;
@@ -1561,9 +1702,7 @@ function drawBoard(
 function drawGrid(
   ctx: CanvasRenderingContext2D,
   rc: ReturnType<typeof rough.canvas>,
-  width: number,
   height: number,
-  margin: { left: number; right: number; top: number; bottom: number },
   toScreen: (point: Point) => ScreenPoint,
   coordinateDisplayMode: CoordinateDisplayMode,
 ) {
@@ -1622,7 +1761,10 @@ function drawGrid(
     roughness: 0.8,
   });
 
-  rc.rectangle(margin.left, margin.top, width - margin.left - margin.right, height - margin.top - margin.bottom, {
+  const frameTopLeft = toScreen({ x: BOARD.xMin, y: BOARD.yMax });
+  const frameBottomRight = toScreen({ x: BOARD.xMax, y: BOARD.yMin });
+
+  rc.rectangle(frameTopLeft.x, frameTopLeft.y, frameBottomRight.x - frameTopLeft.x, frameBottomRight.y - frameTopLeft.y, {
     stroke: "#2f3437",
     strokeWidth: 1.4,
     roughness: 1.2,
@@ -1632,52 +1774,265 @@ function drawGrid(
 
 function drawTerrain(
   ctx: CanvasRenderingContext2D,
-  rc: ReturnType<typeof rough.canvas>,
   toScreen: (point: Point) => ScreenPoint,
   terrain: GameState["terrain"],
 ) {
-  for (const segment of terrain.segments) {
-    const topLeft = toScreen({ x: segment.x1, y: segment.y1 });
-    const topRight = toScreen({ x: segment.x2, y: segment.y2 });
-    const bottomRight = toScreen({ x: segment.x2, y: segment.y2 - 0.5 });
-    const bottomLeft = toScreen({ x: segment.x1, y: segment.y1 - 0.5 });
+  const terrainLayer = document.createElement("canvas");
+  terrainLayer.width = ctx.canvas.width;
+  terrainLayer.height = ctx.canvas.height;
+  const layerCtx = terrainLayer.getContext("2d");
 
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(topLeft.x, topLeft.y);
-    ctx.lineTo(topRight.x, topRight.y);
-    ctx.lineTo(bottomRight.x, bottomRight.y);
-    ctx.lineTo(bottomLeft.x, bottomLeft.y);
-    ctx.closePath();
-    ctx.fillStyle = "#fde68a";
-    ctx.strokeStyle = "#202124";
-    ctx.lineWidth = 2;
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "rgba(180, 83, 9, 0.18)";
-    ctx.fill();
-    ctx.restore();
+  if (!layerCtx) {
+    return;
+  }
+
+  layerCtx.setTransform(ctx.getTransform());
+
+  for (const segment of terrain.segments) {
+    fillTerrainPolygon(layerCtx, [
+      toScreen({ x: segment.x1, y: segment.y1 }),
+      toScreen({ x: segment.x2, y: segment.y2 }),
+      toScreen({ x: segment.x2, y: segment.y2 - 0.5 }),
+      toScreen({ x: segment.x1, y: segment.y1 - 0.5 }),
+    ]);
   }
 
   for (const block of terrain.blocks) {
     const topLeft = toScreen({ x: block.x, y: block.y + block.height });
     const bottomRight = toScreen({ x: block.x + block.width, y: block.y });
-    const width = bottomRight.x - topLeft.x;
-    const height = bottomRight.y - topLeft.y;
-
-    rc.rectangle(topLeft.x, topLeft.y, width, height, {
-      stroke: "#202124",
-      strokeWidth: 1.8,
-      roughness: 1.2,
-      fill: "#fde68a",
-      fillStyle: "solid",
-    });
-
-    ctx.save();
-    ctx.fillStyle = "rgba(180, 83, 9, 0.18)";
-    ctx.fillRect(topLeft.x, topLeft.y, width, height);
-    ctx.restore();
+    fillTerrainPolygon(layerCtx, [
+      topLeft,
+      toScreen({ x: block.x + block.width, y: block.y + block.height }),
+      bottomRight,
+      toScreen({ x: block.x, y: block.y }),
+    ]);
   }
+
+  const terrainMask = createTerrainMask(ctx, toScreen, terrain);
+  punchTerrainHoles(layerCtx, toScreen, terrain.holes);
+  strokeTerrainOutline(layerCtx, toScreen, terrain);
+  punchTerrainHoles(layerCtx, toScreen, terrain.holes);
+  strokeTerrainHoleEdges(layerCtx, terrainMask, toScreen, terrain.holes);
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(terrainLayer, 0, 0);
+  ctx.restore();
+}
+
+function createTerrainMask(
+  sourceCtx: CanvasRenderingContext2D,
+  toScreen: (point: Point) => ScreenPoint,
+  terrain: GameState["terrain"],
+): HTMLCanvasElement {
+  const mask = document.createElement("canvas");
+  mask.width = sourceCtx.canvas.width;
+  mask.height = sourceCtx.canvas.height;
+  const maskCtx = mask.getContext("2d");
+
+  if (!maskCtx) {
+    return mask;
+  }
+
+  maskCtx.setTransform(sourceCtx.getTransform());
+  maskCtx.fillStyle = "#000000";
+  for (const segment of terrain.segments) {
+    fillTerrainPolygon(maskCtx, [
+      toScreen({ x: segment.x1, y: segment.y1 }),
+      toScreen({ x: segment.x2, y: segment.y2 }),
+      toScreen({ x: segment.x2, y: segment.y2 - 0.5 }),
+      toScreen({ x: segment.x1, y: segment.y1 - 0.5 }),
+    ], false);
+  }
+  for (const block of terrain.blocks) {
+    fillTerrainPolygon(maskCtx, [
+      toScreen({ x: block.x, y: block.y + block.height }),
+      toScreen({ x: block.x + block.width, y: block.y + block.height }),
+      toScreen({ x: block.x + block.width, y: block.y }),
+      toScreen({ x: block.x, y: block.y }),
+    ], false);
+  }
+
+  return mask;
+}
+
+function fillTerrainPolygon(ctx: CanvasRenderingContext2D, points: ScreenPoint[], useTerrainColor = true) {
+  ctx.save();
+  ctx.beginPath();
+  points.forEach((point, index) => {
+    if (index === 0) {
+      ctx.moveTo(point.x, point.y);
+    } else {
+      ctx.lineTo(point.x, point.y);
+    }
+  });
+  ctx.closePath();
+  ctx.fillStyle = useTerrainColor ? "#fde68a" : "#000000";
+  ctx.fill();
+  if (useTerrainColor) {
+    ctx.fillStyle = "rgba(180, 83, 9, 0.18)";
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function strokeTerrainOutline(
+  ctx: CanvasRenderingContext2D,
+  toScreen: (point: Point) => ScreenPoint,
+  terrain: GameState["terrain"],
+) {
+  ctx.save();
+  ctx.strokeStyle = "#202124";
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+
+  for (const segment of terrain.segments) {
+    strokeTerrainEdge(ctx, toScreen({ x: segment.x1, y: segment.y1 }), toScreen({ x: segment.x2, y: segment.y2 }));
+    strokeTerrainEdge(
+      ctx,
+      toScreen({ x: segment.x1, y: segment.y1 - 0.5 }),
+      toScreen({ x: segment.x2, y: segment.y2 - 0.5 }),
+    );
+    strokeTerrainCapIfExposed(ctx, toScreen, terrain, segment.id, segment.x1, segment.y1, segment.y1 - 0.5);
+    strokeTerrainCapIfExposed(ctx, toScreen, terrain, segment.id, segment.x2, segment.y2, segment.y2 - 0.5);
+  }
+
+  for (const block of terrain.blocks) {
+    strokeTerrainEdge(
+      ctx,
+      toScreen({ x: block.x, y: block.y + block.height }),
+      toScreen({ x: block.x + block.width, y: block.y + block.height }),
+    );
+    strokeTerrainEdge(ctx, toScreen({ x: block.x, y: block.y }), toScreen({ x: block.x + block.width, y: block.y }));
+    strokeTerrainCapIfExposed(ctx, toScreen, terrain, block.id, block.x, block.y + block.height, block.y);
+    strokeTerrainCapIfExposed(
+      ctx,
+      toScreen,
+      terrain,
+      block.id,
+      block.x + block.width,
+      block.y + block.height,
+      block.y,
+    );
+  }
+
+  ctx.restore();
+}
+
+function strokeTerrainEdge(ctx: CanvasRenderingContext2D, from: ScreenPoint, to: ScreenPoint) {
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.lineTo(to.x, to.y);
+  ctx.stroke();
+}
+
+function strokeTerrainCapIfExposed(
+  ctx: CanvasRenderingContext2D,
+  toScreen: (point: Point) => ScreenPoint,
+  terrain: GameState["terrain"],
+  sourceId: string,
+  x: number,
+  topY: number,
+  bottomY: number,
+) {
+  const isSharedEdge = [
+    ...terrain.blocks.map((block) => ({
+      id: block.id,
+      edges: [
+        { x: block.x, topY: block.y + block.height, bottomY: block.y },
+        { x: block.x + block.width, topY: block.y + block.height, bottomY: block.y },
+      ],
+    })),
+    ...terrain.segments.map((segment) => ({
+      id: segment.id,
+      edges: [
+        { x: segment.x1, topY: segment.y1, bottomY: segment.y1 - 0.5 },
+        { x: segment.x2, topY: segment.y2, bottomY: segment.y2 - 0.5 },
+      ],
+    })),
+  ].some(
+    (item) =>
+      item.id !== sourceId &&
+      item.edges.some(
+        (edge) =>
+          Math.abs(edge.x - x) < 0.01 &&
+          Math.abs(edge.topY - topY) < 0.01 &&
+          Math.abs(edge.bottomY - bottomY) < 0.01,
+      ),
+  );
+
+  if (!isSharedEdge) {
+    strokeTerrainEdge(ctx, toScreen({ x, y: topY }), toScreen({ x, y: bottomY }));
+  }
+}
+
+function punchTerrainHoles(
+  ctx: CanvasRenderingContext2D,
+  toScreen: (point: Point) => ScreenPoint,
+  holes: GameState["terrain"]["holes"],
+) {
+  if (holes.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-out";
+  for (const hole of holes) {
+    const center = toScreen({ x: hole.x, y: hole.y });
+    const radiusX = Math.abs(toScreen({ x: hole.x + hole.radius, y: hole.y }).x - center.x);
+    const radiusY = Math.abs(toScreen({ x: hole.x, y: hole.y + hole.radius }).y - center.y);
+    ctx.beginPath();
+    ctx.ellipse(center.x, center.y, radiusX, radiusY, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function strokeTerrainHoleEdges(
+  ctx: CanvasRenderingContext2D,
+  terrainMask: HTMLCanvasElement,
+  toScreen: (point: Point) => ScreenPoint,
+  holes: GameState["terrain"]["holes"],
+) {
+  if (holes.length === 0) {
+    return;
+  }
+
+  const edgeLayer = document.createElement("canvas");
+  edgeLayer.width = ctx.canvas.width;
+  edgeLayer.height = ctx.canvas.height;
+  const edgeCtx = edgeLayer.getContext("2d");
+
+  if (!edgeCtx) {
+    return;
+  }
+
+  edgeCtx.setTransform(ctx.getTransform());
+  edgeCtx.strokeStyle = "#202124";
+  edgeCtx.lineWidth = 2;
+  edgeCtx.lineCap = "round";
+  edgeCtx.lineJoin = "round";
+
+  for (const hole of holes) {
+    const center = toScreen({ x: hole.x, y: hole.y });
+    const radiusX = Math.abs(toScreen({ x: hole.x + hole.radius, y: hole.y }).x - center.x);
+    const radiusY = Math.abs(toScreen({ x: hole.x, y: hole.y + hole.radius }).y - center.y);
+    edgeCtx.beginPath();
+    edgeCtx.ellipse(center.x, center.y, radiusX, radiusY, 0, 0, Math.PI * 2);
+    edgeCtx.stroke();
+  }
+
+  edgeCtx.save();
+  edgeCtx.setTransform(1, 0, 0, 1, 0, 0);
+  edgeCtx.globalCompositeOperation = "destination-in";
+  edgeCtx.drawImage(terrainMask, 0, 0);
+  edgeCtx.restore();
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(edgeLayer, 0, 0);
+  ctx.restore();
 }
 
 function drawTrajectory(
@@ -1703,15 +2058,22 @@ function drawTrajectory(
   ctx.lineWidth = dashed ? 2 : 3;
   ctx.setLineDash(dashed ? [8, 6] : []);
   ctx.beginPath();
+  let hasOpenPath = false;
 
   for (let index = 0; index <= steps * safeProgress; index += 1) {
     const t = index / steps;
     const x = start + (end - start) * t;
     const y = getYAtX(shot.quadratic, x);
+    if (x < BOARD.xMin || x > BOARD.xMax || y < BOARD.yMin || y > BOARD.yMax) {
+      hasOpenPath = false;
+      continue;
+    }
+
     const screen = toScreen({ x, y });
 
-    if (index === 0) {
+    if (!hasOpenPath) {
       ctx.moveTo(screen.x, screen.y);
+      hasOpenPath = true;
     } else {
       ctx.lineTo(screen.x, screen.y);
     }
@@ -1822,7 +2184,7 @@ function drawBlast(
     strokeWidth: 2,
     roughness: 1.5,
     seed: 10_000 + shot.id,
-    fill: shot.damage > 0 ? "rgba(248, 113, 113, 0.18)" : "rgba(156, 163, 175, 0.16)",
+    fill: "transparent",
     fillStyle: "solid",
   });
 }
