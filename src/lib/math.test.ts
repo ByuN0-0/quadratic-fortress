@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   BLAST_RADIUS,
+  PROJECTILE_TYPES,
   calculateDamage,
   calculateImpactPoint,
   calculateQuadratic,
   calculateShotMath,
   distance,
+  getProjectileConfig,
   validateVertex,
 } from "./math";
 
@@ -66,6 +68,23 @@ describe("quadratic math", () => {
     expect(calculateDamage(3)).toBe(0);
   });
 
+  it("calculates damage by projectile type", () => {
+    const power = getProjectileConfig("power");
+    const normal = getProjectileConfig("normal");
+    const wide = getProjectileConfig("wide");
+
+    expect(calculateDamage(0, power)).toBe(35);
+    expect(calculateDamage(0, normal)).toBe(20);
+    expect(calculateDamage(0, wide)).toBe(12);
+    expect(calculateDamage(1.2, power)).toBe(0);
+    expect(calculateDamage(3, wide)).toBe(0);
+    expect(PROJECTILE_TYPES.map((projectile) => projectile.id)).toEqual([
+      "power",
+      "normal",
+      "wide",
+    ]);
+  });
+
   it("calculates a direct hit from p1 to p2", () => {
     const result = calculateShotMath(
       { x: -8, y: 0 },
@@ -76,5 +95,18 @@ describe("quadratic math", () => {
     expect(result.isValidImpact).toBe(true);
     expect(result.damage).toBe(20);
     expect(result.distanceToTarget).toBe(0);
+    expect(result.projectile.id).toBe("normal");
+  });
+
+  it("uses the selected projectile in shot math", () => {
+    const result = calculateShotMath(
+      { x: -8, y: 0 },
+      { x: 8, y: 0 },
+      { x: 0, y: 6 },
+      "power",
+    );
+
+    expect(result.projectile.id).toBe("power");
+    expect(result.damage).toBe(35);
   });
 });

@@ -23,6 +23,7 @@ import {
   canMoveActivePlayer,
   getActivePlayer,
   getRemainingMove,
+  getShotProjectile,
   getTargetPlayer,
   moveActivePlayer,
   prepareShot,
@@ -38,6 +39,7 @@ import {
   BLAST_RADIUS,
   BOARD,
   COORDINATE_STEP,
+  PROJECTILE_TYPES,
   STARTING_HP,
   formatCoordinate,
   formatEquation,
@@ -58,7 +60,7 @@ import {
 import "../styles/game.css";
 
 const STORAGE_KEY = "quadratic-fortress-tutorial-complete";
-const DEFAULT_INPUT: ShotInput = { vertexX: 0, vertexY: 6 };
+const DEFAULT_INPUT: ShotInput = { vertexX: 0, vertexY: 6, projectileType: "normal" };
 const HP_ANIMATION_DURATION = 600;
 
 type ScreenPoint = {
@@ -66,6 +68,7 @@ type ScreenPoint = {
   y: number;
 };
 
+type CoordinateDisplayMode = "teacher" | "student";
 type DisplayHpByPlayer = Record<PlayerId, number>;
 type AimInputByPlayer = Record<PlayerId, ShotInput>;
 
@@ -80,6 +83,8 @@ export default function QuadraticFortress() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isTrajectoryPreviewOn, setIsTrajectoryPreviewOn] = useState(false);
   const [isShotAnimating, setIsShotAnimating] = useState(false);
+  const [coordinateDisplayMode, setCoordinateDisplayMode] =
+    useState<CoordinateDisplayMode>("teacher");
   const [displayHpByPlayer, setDisplayHpByPlayer] = useState<DisplayHpByPlayer>(() =>
     createDisplayHpByPlayer(createInitialGameState().players),
   );
@@ -228,6 +233,7 @@ export default function QuadraticFortress() {
         animationProgress,
         Boolean(game.lastShot),
         isTrajectoryPreviewOn,
+        coordinateDisplayMode,
       );
     };
 
@@ -239,7 +245,15 @@ export default function QuadraticFortress() {
     }
 
     return () => observer.disconnect();
-  }, [game, previewShot, visibleShot, displayHpByPlayer, animationProgress, isTrajectoryPreviewOn]);
+  }, [
+    game,
+    previewShot,
+    visibleShot,
+    displayHpByPlayer,
+    animationProgress,
+    isTrajectoryPreviewOn,
+    coordinateDisplayMode,
+  ]);
 
   const fire = () => {
     if (isShotAnimating) {
@@ -364,14 +378,16 @@ export default function QuadraticFortress() {
 
         <section className="board-panel arena-board" aria-label="좌표평면 게임판">
           <canvas ref={canvasRef} aria-label="포물선 전장" role="img" />
-          <div className="canvas-caption">
-            <span>
-              {activePlayer.name}: {formatPoint(activePlayer.tankPosition)}
-            </span>
-            <span>
-              목표 {targetPlayer.name}: {formatPoint(targetPlayer.tankPosition)}
-            </span>
-          </div>
+          {coordinateDisplayMode === "teacher" ? (
+            <div className="canvas-caption">
+              <span>
+                {activePlayer.name}: {formatPoint(activePlayer.tankPosition)}
+              </span>
+              <span>
+                목표 {targetPlayer.name}: {formatPoint(targetPlayer.tankPosition)}
+              </span>
+            </div>
+          ) : null}
         </section>
 
         <AimControls
@@ -383,8 +399,10 @@ export default function QuadraticFortress() {
           onInputChange={updateActiveInput}
           onMove={moveTank}
           onResult={() => setIsResultOpen(true)}
+          onCoordinateDisplayModeChange={setCoordinateDisplayMode}
           onTrajectoryPreviewChange={setIsTrajectoryPreviewOn}
           previewShot={previewShot}
+          coordinateDisplayMode={coordinateDisplayMode}
           showTrajectoryPreview={isTrajectoryPreviewOn}
         />
       </section>
@@ -468,6 +486,7 @@ function GameHud({
 }
 
 function AimControls({
+  coordinateDisplayMode,
   game,
   input,
   isShotAnimating,
@@ -476,10 +495,12 @@ function AimControls({
   onInputChange,
   onMove,
   onResult,
+  onCoordinateDisplayModeChange,
   onTrajectoryPreviewChange,
   previewShot,
   showTrajectoryPreview,
 }: {
+  coordinateDisplayMode: CoordinateDisplayMode;
   game: GameState;
   input: ShotInput;
   isShotAnimating: boolean;
@@ -488,6 +509,7 @@ function AimControls({
   onInputChange: (input: ShotInput | ((current: ShotInput) => ShotInput)) => void;
   onMove: (direction: MoveDirection) => void;
   onResult: () => void;
+  onCoordinateDisplayModeChange: (mode: CoordinateDisplayMode) => void;
   onTrajectoryPreviewChange: (show: boolean) => void;
   previewShot: ShotResult;
   showTrajectoryPreview: boolean;
@@ -540,6 +562,15 @@ function AimControls({
             }))
           }
         />
+        <ProjectileSelect
+          input={input}
+          onChange={(projectileType) =>
+            onInputChange((current) => ({
+              ...current,
+              projectileType,
+            }))
+          }
+        />
         <button
           className="fire-button"
           type="submit"
@@ -582,6 +613,24 @@ function AimControls({
       </div>
       <ShotToast result={game.lastShot} vertex={previewShot.vertex} />
       <div className="quick-actions">
+        <div className="mode-toggle" aria-label="좌표 표시 모드">
+          <button
+            className={coordinateDisplayMode === "teacher" ? "is-active" : ""}
+            type="button"
+            aria-pressed={coordinateDisplayMode === "teacher"}
+            onClick={() => onCoordinateDisplayModeChange("teacher")}
+          >
+            교사용
+          </button>
+          <button
+            className={coordinateDisplayMode === "student" ? "is-active" : ""}
+            type="button"
+            aria-pressed={coordinateDisplayMode === "student"}
+            onClick={() => onCoordinateDisplayModeChange("student")}
+          >
+            학생용
+          </button>
+        </div>
         <button
           className={`secondary-button ${showTrajectoryPreview ? "is-active" : ""}`}
           type="button"
@@ -685,6 +734,40 @@ function RangeControl({
   );
 }
 
+function ProjectileSelect({
+  input,
+  onChange,
+}: {
+  input: ShotInput;
+  onChange: (projectileType: NonNullable<ShotInput["projectileType"]>) => void;
+}) {
+  const selectedProjectile = getShotProjectile(input);
+
+  return (
+    <label className="projectile-control">
+      <span>
+        포탄
+        <strong>{selectedProjectile.name}</strong>
+      </span>
+      <select
+        value={selectedProjectile.id}
+        onChange={(event) =>
+          onChange(event.currentTarget.value as NonNullable<ShotInput["projectileType"]>)
+        }
+      >
+        {PROJECTILE_TYPES.map((projectile) => (
+          <option key={projectile.id} value={projectile.id}>
+            {projectile.name}
+          </option>
+        ))}
+      </select>
+      <small>
+        반경 {formatCoordinate(selectedProjectile.blastRadius)} / 피해 {selectedProjectile.maxDamage}
+      </small>
+    </label>
+  );
+}
+
 function ShotToast({ result, vertex }: { result: ShotResult | null; vertex: Point }) {
   if (!result) {
     return (
@@ -733,6 +816,18 @@ function ResultDetailsModal({ result, onClose }: { result: ShotResult; onClose: 
         </div>
         <dl className="formula-grid">
           <div>
+            <dt>포탄</dt>
+            <dd>{result.projectile.name}</dd>
+          </div>
+          <div>
+            <dt>폭발 반경</dt>
+            <dd>{formatCoordinate(result.projectile.blastRadius)}칸</dd>
+          </div>
+          <div>
+            <dt>최대 피해</dt>
+            <dd>{result.projectile.maxDamage}</dd>
+          </div>
+          <div>
             <dt>식</dt>
             <dd>{formatEquation(result.quadratic)}</dd>
           </div>
@@ -773,6 +868,7 @@ function HistoryPopover({ history, onClose }: { history: ShotResult[]; onClose: 
           ) : (
             history.map((shot) => (
               <article className="history-item" key={shot.id}>
+                <p className="history-projectile">{shot.projectile.name}</p>
                 <div>
                   <strong>
                     #{shot.id} {shot.shooterId.toUpperCase()} → {shot.targetId.toUpperCase()}
@@ -1166,6 +1262,7 @@ function drawBoard(
   animationProgress: number,
   hasFiredShot: boolean,
   showTrajectoryPreview: boolean,
+  coordinateDisplayMode: CoordinateDisplayMode,
 ) {
   const rc = rough.canvas(ctx.canvas);
   const margin = {
@@ -1191,7 +1288,7 @@ function drawBoard(
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, width, height);
 
-  drawGrid(ctx, rc, width, height, margin, toScreen);
+  drawGrid(ctx, rc, width, height, margin, toScreen, coordinateDisplayMode);
   const shotShooterPosition =
     game.players.find((player) => player.id === visibleShot.shooterId)?.tankPosition ??
     getActivePlayer(game).tankPosition;
@@ -1220,6 +1317,9 @@ function drawBoard(
       true,
       1,
     );
+    if (previewShot.isValidImpact) {
+      drawBlast(rc, toScreen, previewShot);
+    }
   }
 
   for (const player of game.players) {
@@ -1246,7 +1346,12 @@ function drawGrid(
   height: number,
   margin: { left: number; right: number; top: number; bottom: number },
   toScreen: (point: Point) => ScreenPoint,
+  coordinateDisplayMode: CoordinateDisplayMode,
 ) {
+  const isTeacherMode = coordinateDisplayMode === "teacher";
+  const studentXLabels = new Set([-10, -5, 0, 5, 10]);
+  const studentYLabels = new Set([0, 5, 10]);
+
   ctx.strokeStyle = "#e2e8f0";
   ctx.lineWidth = 1;
   ctx.font = "12px ui-sans-serif, system-ui";
@@ -1255,12 +1360,14 @@ function drawGrid(
   for (let x = BOARD.xMin; x <= BOARD.xMax; x += 1) {
     const from = toScreen({ x, y: BOARD.yMin });
     const to = toScreen({ x, y: BOARD.yMax });
-    ctx.beginPath();
-    ctx.moveTo(from.x, from.y);
-    ctx.lineTo(to.x, to.y);
-    ctx.stroke();
+    if (isTeacherMode) {
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      ctx.stroke();
+    }
 
-    if (x % 2 === 0) {
+    if (isTeacherMode ? x % 2 === 0 : studentXLabels.has(x)) {
       ctx.fillText(String(x), from.x - 7, height - 20);
     }
   }
@@ -1268,12 +1375,14 @@ function drawGrid(
   for (let y = BOARD.yMin; y <= BOARD.yMax; y += 1) {
     const from = toScreen({ x: BOARD.xMin, y });
     const to = toScreen({ x: BOARD.xMax, y });
-    ctx.beginPath();
-    ctx.moveTo(from.x, from.y);
-    ctx.lineTo(to.x, to.y);
-    ctx.stroke();
+    if (isTeacherMode) {
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      ctx.stroke();
+    }
 
-    if (y % 2 === 0) {
+    if (isTeacherMode ? y % 2 === 0 : studentYLabels.has(y)) {
       ctx.fillText(String(y), 18, from.y + 4);
     }
   }
@@ -1433,7 +1542,10 @@ function drawBlast(
   shot: ShotResult,
 ) {
   const center = toScreen(shot.impactPoint);
-  const edge = toScreen({ x: shot.impactPoint.x + BLAST_RADIUS, y: shot.impactPoint.y });
+  const edge = toScreen({
+    x: shot.impactPoint.x + shot.projectile.blastRadius,
+    y: shot.impactPoint.y,
+  });
   const radius = Math.abs(edge.x - center.x);
 
   rc.circle(center.x, center.y, radius * 2, {

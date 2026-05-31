@@ -1,15 +1,16 @@
 import {
-  BLAST_RADIUS,
   BOARD,
-  MAX_DAMAGE,
   STARTING_HP,
   calculateShotMath,
   formatCoordinate,
   formatEquation,
+  getProjectileConfig,
   nearlyEqual,
   round,
   roundToStep,
   type Point,
+  type ProjectileConfig,
+  type ProjectileType,
   type Quadratic,
 } from "./math";
 
@@ -26,6 +27,7 @@ export type Player = {
 export type ShotInput = {
   vertexX: number;
   vertexY: number;
+  projectileType?: ProjectileType;
 };
 
 export type MoveDirection = -1 | 1;
@@ -34,6 +36,7 @@ export type ShotResult = {
   id: number;
   shooterId: PlayerId;
   targetId: PlayerId;
+  projectile: ProjectileConfig;
   vertex: Point;
   quadratic: Quadratic;
   impactPoint: Point;
@@ -103,7 +106,12 @@ export function prepareShot(state: GameState, input: ShotInput): GameState {
   const shooter = getActivePlayer(state);
   const target = getTargetPlayer(state);
   const vertex = { x: input.vertexX, y: input.vertexY };
-  const math = calculateShotMath(shooter.tankPosition, target.tankPosition, vertex);
+  const math = calculateShotMath(
+    shooter.tankPosition,
+    target.tankPosition,
+    vertex,
+    input.projectileType,
+  );
   const result: ShotResult = {
     id: state.shotHistory.length + 1,
     shooterId: shooter.id,
@@ -244,11 +252,16 @@ function buildExplanation(
   const distanceToTarget = formatCoordinate(result.distanceToTarget);
   const impactX = formatCoordinate(result.impactPoint.x);
   const impactY = formatCoordinate(result.impactPoint.y);
+  const blastRadius = result.projectile.blastRadius;
+  const maxDamage = result.projectile.maxDamage;
+  const BLAST_RADIUS = blastRadius;
+  const MAX_DAMAGE = maxDamage;
   const validity = result.isValidImpact
     ? "착탄점이 전장 안에 있어 폭발 피해를 계산합니다."
     : "착탄점이 전장 밖이거나 반대 방향이라 피해가 없습니다.";
 
   return [
+    `${result.projectile.name}: 폭발 반경 ${formatCoordinate(blastRadius)}, 최대 피해 ${maxDamage}`,
     `${shooter.name} 탱크 ${formatPoint(shooter.tankPosition)}와 꼭짓점 ${formatPoint(vertex)}로 a = (0 - ${formatCoordinate(vertex.y)}) / (${formatCoordinate(shooter.tankPosition.x)} - ${formatCoordinate(vertex.x)})² = ${a} 입니다.`,
     `포탄 궤적은 ${formatEquation(result.quadratic)} 입니다.`,
     `지면과 다시 만나는 착탄점은 (${impactX}, ${impactY}) 입니다.`,
@@ -266,7 +279,12 @@ export function createPreviewShot(state: GameState, input: ShotInput): ShotResul
   const shooter = getActivePlayer(state);
   const target = getTargetPlayer(state);
   const vertex = { x: input.vertexX, y: input.vertexY };
-  const math = calculateShotMath(shooter.tankPosition, target.tankPosition, vertex);
+  const math = calculateShotMath(
+    shooter.tankPosition,
+    target.tankPosition,
+    vertex,
+    input.projectileType,
+  );
 
   return {
     id: 0,
@@ -286,4 +304,8 @@ export function isVertexInsideBoard(input: ShotInput): boolean {
     input.vertexY > BOARD.yMin &&
     input.vertexY <= BOARD.yMax
   );
+}
+
+export function getShotProjectile(input: ShotInput): ProjectileConfig {
+  return getProjectileConfig(input.projectileType ?? "normal");
 }

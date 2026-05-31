@@ -10,6 +10,7 @@ export type Quadratic = {
 };
 
 export type ShotMathResult = {
+  projectile: ProjectileConfig;
   quadratic: Quadratic;
   impactPoint: Point;
   distanceToTarget: number;
@@ -30,6 +31,37 @@ export const MAX_DAMAGE = 20;
 export const STARTING_HP = 100;
 export const COORDINATE_STEP = 0.1;
 export const FLOAT_EPSILON = 1e-9;
+
+export const PROJECTILE_TYPES = [
+  {
+    id: "power",
+    name: "강력탄",
+    description: "맞히기 어렵지만 피해가 큰 포탄",
+    blastRadius: 1.2,
+    maxDamage: 35,
+  },
+  {
+    id: "normal",
+    name: "일반탄",
+    description: "반경과 피해가 모두 중간인 기본 포탄",
+    blastRadius: BLAST_RADIUS,
+    maxDamage: MAX_DAMAGE,
+  },
+  {
+    id: "wide",
+    name: "범위탄",
+    description: "맞히기 쉽지만 피해가 약한 포탄",
+    blastRadius: 3,
+    maxDamage: 12,
+  },
+] as const;
+
+export type ProjectileType = (typeof PROJECTILE_TYPES)[number]["id"];
+export type ProjectileConfig = (typeof PROJECTILE_TYPES)[number];
+
+export function getProjectileConfig(type: ProjectileType = "normal"): ProjectileConfig {
+  return PROJECTILE_TYPES.find((projectile) => projectile.id === type) ?? PROJECTILE_TYPES[1];
+}
 
 export function round(value: number, places = 2): number {
   const scale = 10 ** places;
@@ -116,14 +148,20 @@ export function distance(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-export function calculateDamage(distanceToTarget: number): number {
-  if (distanceToTarget >= BLAST_RADIUS) {
+export function calculateDamage(
+  distanceToTarget: number,
+  projectile: ProjectileConfig = getProjectileConfig(),
+): number {
+  if (distanceToTarget >= projectile.blastRadius) {
     return 0;
   }
 
   return Math.max(
     0,
-    Math.min(MAX_DAMAGE, Math.round(MAX_DAMAGE * (1 - distanceToTarget / BLAST_RADIUS))),
+    Math.min(
+      projectile.maxDamage,
+      Math.round(projectile.maxDamage * (1 - distanceToTarget / projectile.blastRadius)),
+    ),
   );
 }
 
@@ -131,7 +169,9 @@ export function calculateShotMath(
   shooter: Point,
   target: Point,
   vertex: Point,
+  projectileType: ProjectileType = "normal",
 ): ShotMathResult {
+  const projectile = getProjectileConfig(projectileType);
   const validationErrors = validateVertex(vertex, shooter);
   const quadratic = validationErrors.length
     ? { a: Number.NaN, h: vertex.x, k: vertex.y }
@@ -142,9 +182,10 @@ export function calculateShotMath(
     isImpactInBounds(impactPoint) &&
     isImpactInShotDirection(shooter, target, impactPoint);
   const distanceToTarget = distance(impactPoint, target);
-  const damage = impactIsValid ? calculateDamage(distanceToTarget) : 0;
+  const damage = impactIsValid ? calculateDamage(distanceToTarget, projectile) : 0;
 
   return {
+    projectile,
     quadratic,
     impactPoint,
     distanceToTarget,

@@ -18,6 +18,19 @@ describe("game reducer", () => {
     expect(next.activePlayerId).toBe("p2");
     expect(next.players[1].hp).toBe(80);
     expect(next.shotHistory).toHaveLength(1);
+    expect(next.shotHistory[0].projectile.id).toBe("normal");
+  });
+
+  it("stores the selected projectile and applies its damage", () => {
+    const next = submitShot(createInitialGameState(), {
+      vertexX: 0,
+      vertexY: 6,
+      projectileType: "power",
+    });
+
+    expect(next.players[1].hp).toBe(65);
+    expect(next.shotHistory[0].projectile.id).toBe("power");
+    expect(next.shotHistory[0].damage).toBe(35);
   });
 
   it("keeps turn and HP unchanged after invalid input", () => {
