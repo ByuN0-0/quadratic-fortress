@@ -171,7 +171,24 @@ describe("game reducer", () => {
   });
 
   it("does not move outside the board", () => {
-    let state = createInitialGameState();
+    let state: ReturnType<typeof createInitialGameState> = {
+      ...createInitialGameState(),
+      players: [
+        {
+          ...createInitialGameState().players[0],
+          tankPosition: { x: -8, y: 0 },
+        },
+        {
+          ...createInitialGameState().players[1],
+          tankPosition: { x: 8, y: 0 },
+        },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+      terrain: {
+        blocks: [] as ReturnType<typeof createInitialGameState>["terrain"]["blocks"],
+        segments: [],
+        holes: [],
+      },
+    };
 
     for (let move = 0; move < 20; move += 1) {
       state = moveActivePlayer(state, -1);
@@ -247,6 +264,30 @@ describe("game reducer", () => {
     const moved = moveActivePlayer(state, 1);
 
     expect(moved.players[0].tankPosition).toEqual({ x: 0.1, y: 0.1 });
+  });
+
+  it("blocks movement through the wall of a circular blast hole", () => {
+    const state = {
+      ...createInitialGameState(),
+      players: [
+        {
+          ...createInitialGameState().players[0],
+          tankPosition: { x: -7.1, y: 1.56 },
+        },
+        {
+          ...createInitialGameState().players[1],
+          tankPosition: { x: 8, y: 2 },
+        },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+      terrain: {
+        blocks: [{ id: "base", x: -10, y: 0, width: 20, height: 2 }],
+        segments: [],
+        holes: [{ id: "blast", x: -8, y: 2, radius: 1 }],
+      },
+    };
+
+    expect(canMoveActivePlayer(state, 1)).toBe(false);
+    expect(moveActivePlayer(state, 1)).toBe(state);
   });
 
   it("does not snap from the base ground up to an overhead platform", () => {

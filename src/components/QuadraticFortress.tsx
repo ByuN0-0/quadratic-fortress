@@ -1788,15 +1788,6 @@ function drawTerrain(
 
   layerCtx.setTransform(ctx.getTransform());
 
-  for (const segment of terrain.segments) {
-    fillTerrainPolygon(layerCtx, [
-      toScreen({ x: segment.x1, y: segment.y1 }),
-      toScreen({ x: segment.x2, y: segment.y2 }),
-      toScreen({ x: segment.x2, y: segment.y2 - 0.5 }),
-      toScreen({ x: segment.x1, y: segment.y1 - 0.5 }),
-    ]);
-  }
-
   for (const block of terrain.blocks) {
     const topLeft = toScreen({ x: block.x, y: block.y + block.height });
     const bottomRight = toScreen({ x: block.x + block.width, y: block.y });
@@ -1808,9 +1799,19 @@ function drawTerrain(
     ]);
   }
 
+  for (const segment of terrain.segments) {
+    fillTerrainPolygon(layerCtx, [
+      toScreen({ x: segment.x1, y: segment.y1 }),
+      toScreen({ x: segment.x2, y: segment.y2 }),
+      toScreen({ x: segment.x2, y: segment.y2 - 0.5 }),
+      toScreen({ x: segment.x1, y: segment.y1 - 0.5 }),
+    ]);
+  }
+
   punchTerrainHoles(layerCtx, toScreen, terrain.holes);
   strokeTerrainOutline(layerCtx, toScreen, terrain);
   punchTerrainHoles(layerCtx, toScreen, terrain.holes);
+  strokeTerrainHoleOutlines(layerCtx, toScreen, terrain);
 
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1849,17 +1850,6 @@ function strokeTerrainOutline(
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
 
-  for (const segment of terrain.segments) {
-    strokeTerrainEdge(ctx, toScreen({ x: segment.x1, y: segment.y1 }), toScreen({ x: segment.x2, y: segment.y2 }));
-    strokeTerrainEdge(
-      ctx,
-      toScreen({ x: segment.x1, y: segment.y1 - 0.5 }),
-      toScreen({ x: segment.x2, y: segment.y2 - 0.5 }),
-    );
-    strokeTerrainCapIfExposed(ctx, toScreen, terrain, segment.id, segment.x1, segment.y1, segment.y1 - 0.5);
-    strokeTerrainCapIfExposed(ctx, toScreen, terrain, segment.id, segment.x2, segment.y2, segment.y2 - 0.5);
-  }
-
   for (const block of terrain.blocks) {
     if (!isHorizontalBlockEdgeShared(terrain, block.id, block.x, block.x + block.width, block.y + block.height)) {
       strokeTerrainEdge(
@@ -1881,6 +1871,17 @@ function strokeTerrainOutline(
       block.y + block.height,
       block.y,
     );
+  }
+
+  for (const segment of terrain.segments) {
+    strokeTerrainEdge(ctx, toScreen({ x: segment.x1, y: segment.y1 }), toScreen({ x: segment.x2, y: segment.y2 }));
+    strokeTerrainEdge(
+      ctx,
+      toScreen({ x: segment.x1, y: segment.y1 - 0.5 }),
+      toScreen({ x: segment.x2, y: segment.y2 - 0.5 }),
+    );
+    strokeTerrainCapIfExposed(ctx, toScreen, terrain, segment.id, segment.x1, segment.y1, segment.y1 - 0.5);
+    strokeTerrainCapIfExposed(ctx, toScreen, terrain, segment.id, segment.x2, segment.y2, segment.y2 - 0.5);
   }
 
   ctx.restore();
@@ -1927,10 +1928,101 @@ function strokeTerrainCapIfExposed(
           Math.abs(edge.bottomY - bottomY) < 0.01,
       ),
   );
+  const midY = (topY + bottomY) / 2;
+  const isCoveredByNeighbor = isTerrainCapCoveredByNeighbor(terrain, sourceId, x, midY);
 
-  if (!isSharedEdge) {
+  if (!isSharedEdge && !isCoveredByNeighbor) {
     strokeTerrainEdge(ctx, toScreen({ x, y: topY }), toScreen({ x, y: bottomY }));
   }
+}
+
+function isTerrainCapCoveredByNeighbor(
+  terrain: GameState["terrain"],
+  sourceId: string,
+  x: number,
+  y: number,
+) {
+  const probeDistance = 0.03;
+  const left = { x: x - probeDistance, y };
+  const right = { x: x + probeDistance, y };
+
+  return (
+    isPointInsideRenderedTerrain(left, terrain, sourceId) &&
+    isPointInsideRenderedTerrain(right, terrain, sourceId)
+  );
+}
+
+function isPointInsideRenderedTerrain(
+  point: Point,
+  terrain: GameState["terrain"],
+  ignoredId: string,
+) {
+  return (
+    terrain.blocks.some((block) => {
+      if (block.id === ignoredId) {
+        return false;
+      }
+
+      return (
+        point.x >= block.x - 0.01 &&
+        point.x <= block.x + block.width + 0.01 &&
+        point.y >= block.y - 0.01 &&
+        point.y <= block.y + block.height + 0.01
+      );
+    }) ||
+    terrain.segments.some((segment) => {
+      if (segment.id === ignoredId) {
+        return false;
+      }
+
+      const minX = Math.min(segment.x1, segment.x2);
+      const maxX = Math.max(segment.x1, segment.x2);
+
+      if (point.x < minX - 0.01 || point.x > maxX + 0.01) {
+        return false;
+      }
+
+      const progress =
+        Math.abs(segment.x2 - segment.x1) < 0.01 ? 0 : (point.x - segment.x1) / (segment.x2 - segment.x1);
+      const topY = segment.y1 + (segment.y2 - segment.y1) * progress;
+
+      return point.y <= topY + 0.01 && point.y >= topY - 0.51;
+    })
+  );
+}
+
+function isPointInsideAnyRenderedTerrain(point: Point, terrain: GameState["terrain"]) {
+  if (isPointInsideAnyRenderedHole(point, terrain)) {
+    return false;
+  }
+
+  return (
+    terrain.blocks.some(
+      (block) =>
+        point.x >= block.x - 0.01 &&
+        point.x <= block.x + block.width + 0.01 &&
+        point.y >= block.y - 0.01 &&
+        point.y <= block.y + block.height + 0.01,
+    ) ||
+    terrain.segments.some((segment) => {
+      const minX = Math.min(segment.x1, segment.x2);
+      const maxX = Math.max(segment.x1, segment.x2);
+
+      if (point.x < minX - 0.01 || point.x > maxX + 0.01) {
+        return false;
+      }
+
+      const progress =
+        Math.abs(segment.x2 - segment.x1) < 0.01 ? 0 : (point.x - segment.x1) / (segment.x2 - segment.x1);
+      const topY = segment.y1 + (segment.y2 - segment.y1) * progress;
+
+      return point.y <= topY + 0.01 && point.y >= topY - 0.51;
+    })
+  );
+}
+
+function isPointInsideAnyRenderedHole(point: Point, terrain: GameState["terrain"]) {
+  return terrain.holes.some((hole) => Math.hypot(point.x - hole.x, point.y - hole.y) <= hole.radius + 0.01);
 }
 
 function isHorizontalBlockEdgeShared(
@@ -1950,6 +2042,22 @@ function isHorizontalBlockEdgeShared(
     const overlap = Math.min(x2, block.x + block.width) - Math.max(x1, block.x);
 
     return sharesY && overlap > 0.01;
+  }) || terrain.segments.some((segment) => {
+    const segmentMinX = Math.min(segment.x1, segment.x2);
+    const segmentMaxX = Math.max(segment.x1, segment.x2);
+    const overlapStart = Math.max(x1, segmentMinX);
+    const overlapEnd = Math.min(x2, segmentMaxX);
+
+    if (overlapEnd - overlapStart <= 0.01) {
+      return false;
+    }
+
+    const midX = (overlapStart + overlapEnd) / 2;
+    const progress = Math.abs(segment.x2 - segment.x1) < 0.01 ? 0 : (midX - segment.x1) / (segment.x2 - segment.x1);
+    const topY = segment.y1 + (segment.y2 - segment.y1) * progress;
+    const bottomY = topY - 0.5;
+
+    return Math.abs(topY - y) < 0.01 || Math.abs(bottomY - y) < 0.01;
   });
 }
 
@@ -1972,6 +2080,63 @@ function punchTerrainHoles(
     ctx.ellipse(center.x, center.y, radiusX, radiusY, 0, 0, Math.PI * 2);
     ctx.fill();
   }
+  ctx.restore();
+}
+
+function strokeTerrainHoleOutlines(
+  ctx: CanvasRenderingContext2D,
+  toScreen: (point: Point) => ScreenPoint,
+  terrain: GameState["terrain"],
+) {
+  if (terrain.holes.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  ctx.strokeStyle = "#202124";
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+
+  for (const hole of terrain.holes) {
+    let isDrawing = false;
+
+    for (let step = 0; step <= 96; step += 1) {
+      const angle = (Math.PI * 2 * step) / 96;
+      const point = {
+        x: hole.x + Math.cos(angle) * hole.radius,
+        y: hole.y + Math.sin(angle) * hole.radius,
+      };
+      const outsidePoint = {
+        x: hole.x + Math.cos(angle) * (hole.radius + 0.04),
+        y: hole.y + Math.sin(angle) * (hole.radius + 0.04),
+      };
+      const insidePoint = {
+        x: hole.x + Math.cos(angle) * (hole.radius - 0.04),
+        y: hole.y + Math.sin(angle) * (hole.radius - 0.04),
+      };
+      const shouldDraw =
+        isPointInsideAnyRenderedTerrain(outsidePoint, terrain) &&
+        !isPointInsideAnyRenderedTerrain(insidePoint, terrain);
+      const screen = toScreen(point);
+
+      if (shouldDraw && !isDrawing) {
+        ctx.beginPath();
+        ctx.moveTo(screen.x, screen.y);
+        isDrawing = true;
+      } else if (shouldDraw) {
+        ctx.lineTo(screen.x, screen.y);
+      } else if (isDrawing) {
+        ctx.stroke();
+        isDrawing = false;
+      }
+    }
+
+    if (isDrawing) {
+      ctx.stroke();
+    }
+  }
+
   ctx.restore();
 }
 

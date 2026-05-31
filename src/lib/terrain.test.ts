@@ -46,6 +46,15 @@ describe("terrain", () => {
     expect(map3.holes).toEqual([]);
   });
 
+  it("uses block-only terrain with half-height blocks on map3", () => {
+    const map3 = createInitialTerrain("map3");
+
+    expect(map3.segments).toEqual([]);
+    expect(map3.blocks.some((block) => block.width === 1 && block.height === 0.5)).toBe(true);
+    expect(map3.blocks.some((block) => block.id.startsWith("map3-left-base"))).toBe(true);
+    expect(map3.blocks.some((block) => block.id.startsWith("map3-right-base"))).toBe(true);
+  });
+
   it("ignores terrain too close to the projectile launch point", () => {
     const quadratic = calculateQuadratic({ x: -8, y: 2.5 }, { x: 0, y: 6 });
     const terrain = {
@@ -155,6 +164,33 @@ describe("terrain", () => {
       x: 0,
       y: OCEAN_FALL_Y,
     });
+  });
+
+  it("places a tank point on the top edge of a circular blast cut", () => {
+    const players: [Player, Player] = [
+      {
+        id: "p1",
+        name: "1P",
+        tankPosition: { x: -7.6, y: 3 },
+        hp: 100,
+        isActive: true,
+      },
+      {
+        id: "p2",
+        name: "2P",
+        tankPosition: { x: 8, y: 2.5 },
+        hp: 100,
+        isActive: false,
+      },
+    ];
+    const terrain = {
+      blocks: [{ id: "platform", x: -9.2, y: 0, width: 2.4, height: 3 }],
+      segments: [],
+      holes: [{ id: "blast", x: -8, y: 2.1, radius: 1 }],
+    };
+
+    expect(findSupportYOrNull(-7.6, 3, terrain)).toBe(1.18);
+    expect(settlePlayersOnTerrain(players, terrain, false)[0].tankPosition.y).toBe(1.18);
   });
 
   it("calculates support height on sloped terrain with linear interpolation", () => {

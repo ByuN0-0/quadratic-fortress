@@ -15,6 +15,7 @@ export type TerrainBlock = {
   y: number;
   width: number;
   height: number;
+  isFoundation?: boolean;
 };
 
 export type TerrainSegment = {
@@ -54,6 +55,7 @@ const INITIAL_TERRAIN_BY_MAP: Record<
       { id: "air-left", x: -9.2, y: 2, width: 2.4, height: AIR_TERRAIN_HEIGHT },
       { id: "air-center", x: -1.5, y: 4, width: 3, height: AIR_TERRAIN_HEIGHT },
       { id: "air-right", x: 6.8, y: 2, width: 2.4, height: AIR_TERRAIN_HEIGHT },
+      ...createLowerFoundationBlocks("map1-foundation"),
       ...createDigitThreeBlocks("map1-3", -5, 5),
       ...createDigitOneBlocks("map1-1", 2, 5),
       { id: "map1-middle-mark-left", x: -1, y: 7, width: 1, height: 1 },
@@ -69,6 +71,7 @@ const INITIAL_TERRAIN_BY_MAP: Record<
       { id: "map2-left", x: -9.2, y: 2, width: 2.4, height: AIR_TERRAIN_HEIGHT },
       { id: "map2-center", x: -1.5, y: 4, width: 3, height: AIR_TERRAIN_HEIGHT },
       { id: "map2-right", x: 6.8, y: 2, width: 2.4, height: AIR_TERRAIN_HEIGHT },
+      ...createLowerFoundationBlocks("map2-foundation"),
       ...createDigitThreeBlocks("map2-3", -5, 5),
       ...createDigitTwoBlocks("map2-2", 2, 5),
       { id: "map2-middle-mark-left", x: -1, y: 7, width: 1, height: 1 },
@@ -80,15 +83,8 @@ const INITIAL_TERRAIN_BY_MAP: Record<
     ],
   },
   map3: {
-    blocks: [
-      { id: "map3-left", x: -9.2, y: 2.5, width: 2.4, height: AIR_TERRAIN_HEIGHT },
-      { id: "map3-center", x: -2.2, y: 5, width: 4.4, height: AIR_TERRAIN_HEIGHT },
-      { id: "map3-right", x: 6.8, y: 2.5, width: 2.4, height: AIR_TERRAIN_HEIGHT },
-    ],
-    segments: [
-      { id: "map3-left-rise", x1: -6.8, y1: 3, x2: -2.2, y2: 5.5 },
-      { id: "map3-right-drop", x1: 2.2, y1: 5.5, x2: 6.8, y2: 3 },
-    ],
+    blocks: createMapThreeBlocks(),
+    segments: [],
   },
 };
 
@@ -132,6 +128,68 @@ function createDigitOneBlocks(prefix: string, x: number, y: number): TerrainBloc
     [0, 3],
     [0, 4],
   ]);
+}
+
+function createLowerFoundationBlocks(prefix: string): TerrainBlock[] {
+  return [
+    { id: `${prefix}-base`, x: -10, y: 0, width: 20, height: 2, isFoundation: true },
+    { id: `${prefix}-left-side`, x: -10, y: 2, width: 1, height: 0.9, isFoundation: true },
+    { id: `${prefix}-right-side`, x: 9, y: 2, width: 1, height: 0.9, isFoundation: true },
+    { id: `${prefix}-center`, x: -2, y: 2, width: 4, height: 1.9, isFoundation: true },
+  ];
+}
+
+function createMapThreeBlocks(): TerrainBlock[] {
+  return [
+    ...createBlockRow("map3-left-base", -10, 0, 5),
+    ...createBlockRow("map3-right-base", 5, 0, 5),
+    ...createBlockGrid("map3-left-start", -9, 6, 2, 2),
+    ...createBlockGrid("map3-left-lower", -7, 3, 2, 2),
+    ...createHalfBlockRow("map3-left-mid-a", -9, 4.5, 2),
+    ...createHalfBlockRow("map3-left-mid-b", -9, 3, 2),
+    ...createBlockGrid("map3-center-left-wall", -2, 7, 1, 3),
+    ...createBlockGrid("map3-center-right-wall", 1, 7, 1, 3),
+    ...createBlockRow("map3-center-top", -1, 9, 2),
+    ...createBlockGrid("map3-center-column", 0, 1, 1, 4),
+    ...createBlockRow("map3-center-column-foot", -1, 0.5, 2),
+    ...createHalfBlockRow("map3-center-half-left-a", -1, 4, 1),
+    ...createHalfBlockRow("map3-center-half-left-b", -1, 3, 1),
+    ...createHalfBlockRow("map3-center-half-left-c", -1, 2, 1),
+    ...createHalfBlockRow("map3-center-half-left-d", -1, 1, 1),
+    ...createBlockGrid("map3-right-start", 7, 5, 2, 2),
+    ...createBlockGrid("map3-right-lower", 5, 2, 2, 2),
+    ...createHalfBlockRow("map3-right-mid-a", 7, 3.5, 2),
+    ...createHalfBlockRow("map3-right-mid-b", 7, 2, 2),
+  ];
+}
+
+function createBlockGrid(prefix: string, x: number, y: number, width: number, height: number): TerrainBlock[] {
+  return Array.from({ length: width * height }, (_, index) => {
+    const cellX = index % width;
+    const cellY = Math.floor(index / width);
+
+    return {
+      id: `${prefix}-${cellX}-${cellY}`,
+      x: x + cellX,
+      y: y + cellY,
+      width: 1,
+      height: 1,
+    };
+  });
+}
+
+function createBlockRow(prefix: string, x: number, y: number, length: number): TerrainBlock[] {
+  return createBlockGrid(prefix, x, y, length, 1);
+}
+
+function createHalfBlockRow(prefix: string, x: number, y: number, length: number): TerrainBlock[] {
+  return Array.from({ length }, (_, index) => ({
+    id: `${prefix}-${index}`,
+    x: x + index,
+    y,
+    width: 1,
+    height: AIR_TERRAIN_HEIGHT,
+  }));
 }
 
 function createDigitBlocks(prefix: string, x: number, y: number, cells: [number, number][]): TerrainBlock[] {
@@ -285,7 +343,14 @@ export function findSupportYOrNull(
 ): number | null {
   const normalizedTerrain = normalizeTerrain(terrain);
   const { blocks, segments, holes } = normalizedTerrain;
-  const blockY = blocks
+  const nonFoundationBlockY = blocks
+    .filter((block) => !block.isFoundation)
+    .filter((block) => blockCoversX(block, x))
+    .map((block) => block.y + block.height)
+    .filter((topY) => !isPointInsideAnyHole({ x, y: topY }, holes))
+    .filter((topY) => topY <= fromY + SUPPORT_TOLERANCE);
+  const foundationBlockY = blocks
+    .filter((block) => block.isFoundation)
     .filter((block) => blockCoversX(block, x))
     .map((block) => block.y + block.height)
     .filter((topY) => !isPointInsideAnyHole({ x, y: topY }, holes))
@@ -295,7 +360,9 @@ export function findSupportYOrNull(
     .map((segment) => getSegmentYAtX(segment, x))
     .filter((y) => !isPointInsideAnyHole({ x, y }, holes))
     .filter((y) => y <= fromY + SUPPORT_TOLERANCE);
-  const supports = [...blockY, ...segmentY];
+  const holeBoundaryY = findHoleBoundarySupports(x, fromY, normalizedTerrain);
+  const upperSupports = [...nonFoundationBlockY, ...segmentY, ...holeBoundaryY];
+  const supports = upperSupports.length > 0 ? upperSupports : foundationBlockY;
   if (supports.length === 0) {
     return null;
   }
@@ -311,7 +378,14 @@ export function findSupportAtX(
   terrain: TerrainState | TerrainBlock[],
 ): { y: number; slope: number } | null {
   const normalizedTerrain = normalizeTerrain(terrain);
-  const blockSupports = normalizedTerrain.blocks
+  const nonFoundationBlockSupports = normalizedTerrain.blocks
+    .filter((block) => !block.isFoundation)
+    .filter((block) => blockCoversX(block, x))
+    .map((block) => ({ y: block.y + block.height, slope: 0 }))
+    .filter((support) => !isPointInsideAnyHole({ x, y: support.y }, normalizedTerrain.holes))
+    .filter((support) => support.y <= fromY + SUPPORT_TOLERANCE);
+  const foundationBlockSupports = normalizedTerrain.blocks
+    .filter((block) => block.isFoundation)
     .filter((block) => blockCoversX(block, x))
     .map((block) => ({ y: block.y + block.height, slope: 0 }))
     .filter((support) => !isPointInsideAnyHole({ x, y: support.y }, normalizedTerrain.holes))
@@ -321,7 +395,12 @@ export function findSupportAtX(
     .map((segment) => ({ y: getSegmentYAtX(segment, x), slope: getSegmentSlope(segment) }))
     .filter((support) => !isPointInsideAnyHole({ x, y: support.y }, normalizedTerrain.holes))
     .filter((support) => support.y <= fromY + SUPPORT_TOLERANCE);
-  const supports = [...blockSupports, ...segmentSupports];
+  const holeBoundarySupports = findHoleBoundarySupports(x, fromY, normalizedTerrain).map((y) => ({
+    y,
+    slope: 0,
+  }));
+  const upperSupports = [...nonFoundationBlockSupports, ...segmentSupports, ...holeBoundarySupports];
+  const supports = upperSupports.length > 0 ? upperSupports : foundationBlockSupports;
 
   if (supports.length === 0) {
     return null;
@@ -355,6 +434,40 @@ export function getSegmentSlope(segment: TerrainSegment): number {
   }
 
   return (segment.y2 - segment.y1) / (segment.x2 - segment.x1);
+}
+
+function findHoleBoundarySupports(
+  x: number,
+  fromY: number,
+  terrain: TerrainState,
+): number[] {
+  return terrain.holes.flatMap((hole) => {
+    const dx = x - hole.x;
+    if (Math.abs(dx) >= hole.radius) {
+      return [];
+    }
+
+    const offsetY = Math.sqrt(hole.radius ** 2 - dx ** 2);
+    const candidates = [hole.y + offsetY, hole.y - offsetY]
+      .map((y) => round(y, 2))
+      .filter((y) => y <= fromY + SUPPORT_TOLERANCE)
+      .filter((y) => isSolidTerrainJustBelow({ x, y }, terrain));
+
+    return candidates;
+  });
+}
+
+function isPointInsideTerrainBody(point: Point, terrain: TerrainState): boolean {
+  return (
+    terrain.blocks.some((block) => isPointInsideBlock(point, block)) ||
+    terrain.segments.some((segment) => isPointInsideSegmentBody(point, segment))
+  );
+}
+
+function isSolidTerrainJustBelow(point: Point, terrain: TerrainState): boolean {
+  const probe = { x: point.x, y: point.y - SUPPORT_TOLERANCE };
+
+  return isPointInsideTerrainBody(probe, terrain) && !isPointInsideAnyHole(probe, terrain.holes);
 }
 
 function splitBlockByBlast(block: TerrainBlock, center: Point, radius: number): TerrainBlock[] {

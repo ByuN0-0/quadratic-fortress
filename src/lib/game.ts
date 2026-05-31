@@ -287,6 +287,10 @@ export function canMoveActivePlayer(state: GameState, direction: MoveDirection):
   const canStandOnNextSupport =
     nextSupport !== null;
   const nextSlope = nextSupport?.slope ?? 0;
+  const movementSlope =
+    currentSupport && nextSupport
+      ? Math.abs(nextSupport.y - currentSupport.y) / MOVE_STEP
+      : Infinity;
 
   return (
     nextX >= BOARD.xMin &&
@@ -295,7 +299,8 @@ export function canMoveActivePlayer(state: GameState, direction: MoveDirection):
     canStandOnNextSupport &&
     currentSupport !== null &&
     Math.abs(currentSupport.slope) <= MAX_TANK_TERRAIN_SLOPE &&
-    Math.abs(nextSlope) <= MAX_TANK_TERRAIN_SLOPE
+    Math.abs(nextSlope) <= MAX_TANK_TERRAIN_SLOPE &&
+    movementSlope <= MAX_TANK_TERRAIN_SLOPE + 0.01
   );
 }
 
@@ -419,7 +424,13 @@ function findReachableTankSupport(
   currentY: number,
 ): { y: number; slope: number } | null {
   const maxReachY = currentY + MAX_TANK_TERRAIN_SLOPE * MOVE_STEP;
-  return findSupportAtX(x, maxReachY, state.terrain) ?? (state.mode === "normal" ? { y: BOARD.yMin, slope: 0 } : null);
+  const support = findSupportAtX(x, maxReachY, state.terrain);
+
+  if (support || state.mode !== "normal" || state.terrain.holes.length > 0) {
+    return support;
+  }
+
+  return { y: BOARD.yMin, slope: 0 };
 }
 
 export function isVertexInsideBoard(input: ShotInput): boolean {
