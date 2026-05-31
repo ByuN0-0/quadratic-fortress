@@ -12,6 +12,23 @@ import {
 } from "./game";
 import { getProjectileConfig } from "./math";
 
+function createFlatShotState(): ReturnType<typeof createInitialGameState> {
+  const state = createInitialGameState();
+
+  return {
+    ...state,
+    players: [
+      { ...state.players[0], tankPosition: { x: -8, y: 0 } },
+      { ...state.players[1], tankPosition: { x: 8, y: 0 } },
+    ],
+    terrain: {
+      blocks: [],
+      segments: [],
+      holes: [],
+    },
+  };
+}
+
 describe("game reducer", () => {
   it("stores the selected game mode", () => {
     expect(createInitialGameState().mode).toBe("normal");
@@ -33,7 +50,7 @@ describe("game reducer", () => {
   });
 
   it("switches turn and applies damage after a valid shot", () => {
-    const next = submitShot(createInitialGameState(), { vertexX: 0, vertexY: 6 });
+    const next = submitShot(createFlatShotState(), { vertexX: 0, vertexY: 6 });
 
     expect(next.activePlayerId).toBe("p2");
     expect(next.players[1].hp).toBe(80);
@@ -42,15 +59,15 @@ describe("game reducer", () => {
   });
 
   it("stores the selected projectile and applies its damage", () => {
-    const next = submitShot(createInitialGameState(), {
+    const next = submitShot(createFlatShotState(), {
       vertexX: 0,
       vertexY: 6,
       projectileType: "power",
     });
 
-    expect(next.players[1].hp).toBe(66);
+    expect(next.players[1].hp).toBe(65);
     expect(next.shotHistory[0].projectile.id).toBe("power");
-    expect(next.shotHistory[0].damage).toBe(34);
+    expect(next.shotHistory[0].damage).toBe(35);
   });
 
   it("explodes on air terrain before reaching the ground impact", () => {
@@ -84,7 +101,7 @@ describe("game reducer", () => {
   });
 
   it("prepares a valid shot without immediately applying damage or switching turn", () => {
-    const state = moveActivePlayer(createInitialGameState(), 1);
+    const state = moveActivePlayer(createFlatShotState(), 1);
     const next = prepareShot(state, { vertexX: 0, vertexY: 6 });
 
     expect(next.activePlayerId).toBe("p1");
@@ -96,7 +113,7 @@ describe("game reducer", () => {
   });
 
   it("applies the prepared valid shot and switches turn", () => {
-    const prepared = prepareShot(createInitialGameState(), { vertexX: 0, vertexY: 6 });
+    const prepared = prepareShot(createFlatShotState(), { vertexX: 0, vertexY: 6 });
     const applied = applyLastShot(prepared);
 
     expect(applied.activePlayerId).toBe("p2");
@@ -119,7 +136,7 @@ describe("game reducer", () => {
   });
 
   it("does not apply the same prepared shot twice", () => {
-    const prepared = prepareShot(createInitialGameState(), { vertexX: 0, vertexY: 6 });
+    const prepared = prepareShot(createFlatShotState(), { vertexX: 0, vertexY: 6 });
     const applied = applyLastShot(prepared);
     const reapplied = applyLastShot(applied);
 

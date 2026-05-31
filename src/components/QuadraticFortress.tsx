@@ -1808,52 +1808,14 @@ function drawTerrain(
     ]);
   }
 
-  const terrainMask = createTerrainMask(ctx, toScreen, terrain);
   punchTerrainHoles(layerCtx, toScreen, terrain.holes);
   strokeTerrainOutline(layerCtx, toScreen, terrain);
   punchTerrainHoles(layerCtx, toScreen, terrain.holes);
-  strokeTerrainHoleEdges(layerCtx, terrainMask, toScreen, terrain.holes);
 
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(terrainLayer, 0, 0);
   ctx.restore();
-}
-
-function createTerrainMask(
-  sourceCtx: CanvasRenderingContext2D,
-  toScreen: (point: Point) => ScreenPoint,
-  terrain: GameState["terrain"],
-): HTMLCanvasElement {
-  const mask = document.createElement("canvas");
-  mask.width = sourceCtx.canvas.width;
-  mask.height = sourceCtx.canvas.height;
-  const maskCtx = mask.getContext("2d");
-
-  if (!maskCtx) {
-    return mask;
-  }
-
-  maskCtx.setTransform(sourceCtx.getTransform());
-  maskCtx.fillStyle = "#000000";
-  for (const segment of terrain.segments) {
-    fillTerrainPolygon(maskCtx, [
-      toScreen({ x: segment.x1, y: segment.y1 }),
-      toScreen({ x: segment.x2, y: segment.y2 }),
-      toScreen({ x: segment.x2, y: segment.y2 - 0.5 }),
-      toScreen({ x: segment.x1, y: segment.y1 - 0.5 }),
-    ], false);
-  }
-  for (const block of terrain.blocks) {
-    fillTerrainPolygon(maskCtx, [
-      toScreen({ x: block.x, y: block.y + block.height }),
-      toScreen({ x: block.x + block.width, y: block.y + block.height }),
-      toScreen({ x: block.x + block.width, y: block.y }),
-      toScreen({ x: block.x, y: block.y }),
-    ], false);
-  }
-
-  return mask;
 }
 
 function fillTerrainPolygon(ctx: CanvasRenderingContext2D, points: ScreenPoint[], useTerrainColor = true) {
@@ -1899,12 +1861,16 @@ function strokeTerrainOutline(
   }
 
   for (const block of terrain.blocks) {
-    strokeTerrainEdge(
-      ctx,
-      toScreen({ x: block.x, y: block.y + block.height }),
-      toScreen({ x: block.x + block.width, y: block.y + block.height }),
-    );
-    strokeTerrainEdge(ctx, toScreen({ x: block.x, y: block.y }), toScreen({ x: block.x + block.width, y: block.y }));
+    if (!isHorizontalBlockEdgeShared(terrain, block.id, block.x, block.x + block.width, block.y + block.height)) {
+      strokeTerrainEdge(
+        ctx,
+        toScreen({ x: block.x, y: block.y + block.height }),
+        toScreen({ x: block.x + block.width, y: block.y + block.height }),
+      );
+    }
+    if (!isHorizontalBlockEdgeShared(terrain, block.id, block.x, block.x + block.width, block.y)) {
+      strokeTerrainEdge(ctx, toScreen({ x: block.x, y: block.y }), toScreen({ x: block.x + block.width, y: block.y }));
+    }
     strokeTerrainCapIfExposed(ctx, toScreen, terrain, block.id, block.x, block.y + block.height, block.y);
     strokeTerrainCapIfExposed(
       ctx,
@@ -1967,6 +1933,26 @@ function strokeTerrainCapIfExposed(
   }
 }
 
+function isHorizontalBlockEdgeShared(
+  terrain: GameState["terrain"],
+  sourceId: string,
+  x1: number,
+  x2: number,
+  y: number,
+) {
+  return terrain.blocks.some((block) => {
+    if (block.id === sourceId) {
+      return false;
+    }
+
+    const sharesY =
+      Math.abs(block.y - y) < 0.01 || Math.abs(block.y + block.height - y) < 0.01;
+    const overlap = Math.min(x2, block.x + block.width) - Math.max(x1, block.x);
+
+    return sharesY && overlap > 0.01;
+  });
+}
+
 function punchTerrainHoles(
   ctx: CanvasRenderingContext2D,
   toScreen: (point: Point) => ScreenPoint,
@@ -1986,52 +1972,6 @@ function punchTerrainHoles(
     ctx.ellipse(center.x, center.y, radiusX, radiusY, 0, 0, Math.PI * 2);
     ctx.fill();
   }
-  ctx.restore();
-}
-
-function strokeTerrainHoleEdges(
-  ctx: CanvasRenderingContext2D,
-  terrainMask: HTMLCanvasElement,
-  toScreen: (point: Point) => ScreenPoint,
-  holes: GameState["terrain"]["holes"],
-) {
-  if (holes.length === 0) {
-    return;
-  }
-
-  const edgeLayer = document.createElement("canvas");
-  edgeLayer.width = ctx.canvas.width;
-  edgeLayer.height = ctx.canvas.height;
-  const edgeCtx = edgeLayer.getContext("2d");
-
-  if (!edgeCtx) {
-    return;
-  }
-
-  edgeCtx.setTransform(ctx.getTransform());
-  edgeCtx.strokeStyle = "#202124";
-  edgeCtx.lineWidth = 2;
-  edgeCtx.lineCap = "round";
-  edgeCtx.lineJoin = "round";
-
-  for (const hole of holes) {
-    const center = toScreen({ x: hole.x, y: hole.y });
-    const radiusX = Math.abs(toScreen({ x: hole.x + hole.radius, y: hole.y }).x - center.x);
-    const radiusY = Math.abs(toScreen({ x: hole.x, y: hole.y + hole.radius }).y - center.y);
-    edgeCtx.beginPath();
-    edgeCtx.ellipse(center.x, center.y, radiusX, radiusY, 0, 0, Math.PI * 2);
-    edgeCtx.stroke();
-  }
-
-  edgeCtx.save();
-  edgeCtx.setTransform(1, 0, 0, 1, 0, 0);
-  edgeCtx.globalCompositeOperation = "destination-in";
-  edgeCtx.drawImage(terrainMask, 0, 0);
-  edgeCtx.restore();
-
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.drawImage(edgeLayer, 0, 0);
   ctx.restore();
 }
 

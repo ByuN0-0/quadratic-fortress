@@ -54,6 +54,10 @@ const INITIAL_TERRAIN_BY_MAP: Record<
       { id: "air-left", x: -9.2, y: 2, width: 2.4, height: AIR_TERRAIN_HEIGHT },
       { id: "air-center", x: -1.5, y: 4, width: 3, height: AIR_TERRAIN_HEIGHT },
       { id: "air-right", x: 6.8, y: 2, width: 2.4, height: AIR_TERRAIN_HEIGHT },
+      ...createDigitThreeBlocks("map1-3", -5, 5),
+      ...createDigitOneBlocks("map1-1", 2, 5),
+      { id: "map1-middle-mark-left", x: -1, y: 7, width: 1, height: 1 },
+      { id: "map1-middle-mark-right", x: 0, y: 7, width: 1, height: 1 },
     ],
     segments: [
       { id: "slope-up-left", x1: -6.8, y1: 2.5, x2: -1.5, y2: 4.5 },
@@ -62,15 +66,17 @@ const INITIAL_TERRAIN_BY_MAP: Record<
   },
   map2: {
     blocks: [
-      { id: "map2-left", x: -9, y: 1.5, width: 2.8, height: AIR_TERRAIN_HEIGHT },
-      { id: "map2-mid-left", x: -3.5, y: 3, width: 2, height: AIR_TERRAIN_HEIGHT },
-      { id: "map2-mid-right", x: 1.5, y: 3, width: 2, height: AIR_TERRAIN_HEIGHT },
-      { id: "map2-right", x: 6.2, y: 1.5, width: 2.8, height: AIR_TERRAIN_HEIGHT },
+      { id: "map2-left", x: -9.2, y: 2, width: 2.4, height: AIR_TERRAIN_HEIGHT },
+      { id: "map2-center", x: -1.5, y: 4, width: 3, height: AIR_TERRAIN_HEIGHT },
+      { id: "map2-right", x: 6.8, y: 2, width: 2.4, height: AIR_TERRAIN_HEIGHT },
+      ...createDigitThreeBlocks("map2-3", -5, 5),
+      ...createDigitTwoBlocks("map2-2", 2, 5),
+      { id: "map2-middle-mark-left", x: -1, y: 7, width: 1, height: 1 },
+      { id: "map2-middle-mark-right", x: 0, y: 7, width: 1, height: 1 },
     ],
     segments: [
-      { id: "map2-slope-left", x1: -6.2, y1: 2, x2: -3.5, y2: 3.5 },
-      { id: "map2-slope-center", x1: -1.5, y1: 3.5, x2: 1.5, y2: 3.5 },
-      { id: "map2-slope-right", x1: 3.5, y1: 3.5, x2: 6.2, y2: 2 },
+      { id: "map2-slope-up-left", x1: -6.8, y1: 2.5, x2: -1.5, y2: 4.5 },
+      { id: "map2-slope-down-right", x1: 1.5, y1: 4.5, x2: 6.8, y2: 2.5 },
     ],
   },
   map3: {
@@ -86,6 +92,58 @@ const INITIAL_TERRAIN_BY_MAP: Record<
   },
 };
 
+function createDigitThreeBlocks(prefix: string, x: number, y: number): TerrainBlock[] {
+  return createDigitBlocks(prefix, x, y, [
+    [0, 0],
+    [1, 0],
+    [2, 0],
+    [2, 1],
+    [0, 2],
+    [1, 2],
+    [2, 2],
+    [2, 3],
+    [0, 4],
+    [1, 4],
+    [2, 4],
+  ]);
+}
+
+function createDigitTwoBlocks(prefix: string, x: number, y: number): TerrainBlock[] {
+  return createDigitBlocks(prefix, x, y, [
+    [0, 0],
+    [1, 0],
+    [2, 0],
+    [0, 1],
+    [0, 2],
+    [1, 2],
+    [2, 2],
+    [2, 3],
+    [0, 4],
+    [1, 4],
+    [2, 4],
+  ]);
+}
+
+function createDigitOneBlocks(prefix: string, x: number, y: number): TerrainBlock[] {
+  return createDigitBlocks(prefix, x, y, [
+    [0, 0],
+    [0, 1],
+    [0, 2],
+    [0, 3],
+    [0, 4],
+  ]);
+}
+
+function createDigitBlocks(prefix: string, x: number, y: number, cells: [number, number][]): TerrainBlock[] {
+  return cells.map(([cellX, cellY]) => ({
+    id: `${prefix}-${cellX}-${cellY}`,
+    x: x + cellX,
+    y: y + cellY,
+    width: 1,
+    height: 1,
+  }));
+}
+
 export function createInitialTerrain(mapId: TerrainMapId = "map1"): TerrainState {
   const terrain = INITIAL_TERRAIN_BY_MAP[mapId] ?? INITIAL_TERRAIN_BY_MAP.map1;
 
@@ -97,7 +155,13 @@ export function createInitialTerrain(mapId: TerrainMapId = "map1"): TerrainState
 }
 
 export function getTerrainMapLabel(mapId: TerrainMapId): string {
-  return `맵${TERRAIN_MAP_IDS.indexOf(mapId) + 1}`;
+  const labels: Record<TerrainMapId, string> = {
+    map1: "3학년 1반",
+    map2: "3학년 2반",
+    map3: "맵3",
+  };
+
+  return labels[mapId];
 }
 
 export function findProjectileTerrainImpact(
