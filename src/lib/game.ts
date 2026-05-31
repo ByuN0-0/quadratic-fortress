@@ -13,6 +13,14 @@ import {
   type ProjectileType,
   type Quadratic,
 } from "./math";
+import {
+  createInitialTerrain,
+  destroyTerrain,
+  findProjectileTerrainImpact,
+  findSupportY,
+  settlePlayersOnTerrain,
+  type TerrainState,
+} from "./terrain";
 
 export type PlayerId = "p1" | "p2";
 
@@ -46,6 +54,7 @@ export type ShotResult = {
   validationErrors: string[];
   explanation: string[];
   isApplied: boolean;
+  terrainImpactBlockId: string | null;
 };
 
 export type GameState = {
@@ -54,26 +63,39 @@ export type GameState = {
   movementUsed: number;
   shotHistory: ShotResult[];
   lastShot: ShotResult | null;
+  terrain: TerrainState;
   winnerId: PlayerId | null;
 };
 
 export const MAX_TURN_MOVE = 3;
 export const MOVE_STEP = 0.1;
+export const PLAYER_START_HEIGHT = BOARD.yMax;
+export const PROJECTILE_TERRAIN_ARM_DISTANCE = 0.7;
 
 export function createInitialGameState(): GameState {
+  const terrain = createInitialTerrain();
+  const p1StartX = -8;
+  const p2StartX = 8;
+
   return {
     players: [
       {
         id: "p1",
         name: "1P",
-        tankPosition: { x: -8, y: 0 },
+        tankPosition: {
+          x: p1StartX,
+          y: findSupportY(p1StartX, PLAYER_START_HEIGHT, terrain),
+        },
         hp: STARTING_HP,
         isActive: true,
       },
       {
         id: "p2",
         name: "2P",
-        tankPosition: { x: 8, y: 0 },
+        tankPosition: {
+          x: p2StartX,
+          y: findSupportY(p2StartX, PLAYER_START_HEIGHT, terrain),
+        },
         hp: STARTING_HP,
         isActive: false,
       },
@@ -82,6 +104,7 @@ export function createInitialGameState(): GameState {
     movementUsed: 0,
     shotHistory: [],
     lastShot: null,
+    terrain,
     winnerId: null,
   };
 }
@@ -106,12 +129,31 @@ export function prepareShot(state: GameState, input: ShotInput): GameState {
   const shooter = getActivePlayer(state);
   const target = getTargetPlayer(state);
   const vertex = { x: input.vertexX, y: input.vertexY };
-  const math = calculateShotMath(
+  const baseMath = calculateShotMath(
     shooter.tankPosition,
     target.tankPosition,
     vertex,
     input.projectileType,
   );
+  const terrainImpact =
+    baseMath.validationErrors.length === 0
+      ? findProjectileTerrainImpact(
+          shooter.tankPosition,
+          baseMath.quadratic,
+          baseMath.impactPoint,
+          state.terrain,
+          PROJECTILE_TERRAIN_ARM_DISTANCE,
+        )
+      : null;
+  const math = terrainImpact
+    ? calculateShotMath(
+        shooter.tankPosition,
+        target.tankPosition,
+        vertex,
+        input.projectileType,
+        terrainImpact.point,
+      )
+    : baseMath;
   const result: ShotResult = {
     id: state.shotHistory.length + 1,
     shooterId: shooter.id,
@@ -120,6 +162,7 @@ export function prepareShot(state: GameState, input: ShotInput): GameState {
     ...math,
     explanation: buildExplanation(shooter, target, vertex, math),
     isApplied: false,
+    terrainImpactBlockId: terrainImpact?.blockId ?? null,
   };
 
   return {
@@ -147,7 +190,7 @@ export function applyLastShot(state: GameState): GameState {
     isApplied: true,
   };
 
-  const nextPlayers = state.players.map((player) => {
+  const damagedPlayers = state.players.map((player) => {
     if (player.id !== result.targetId) {
       return {
         ...player,
@@ -161,6 +204,10 @@ export function applyLastShot(state: GameState): GameState {
       isActive: true,
     };
   }) as [Player, Player];
+  const nextTerrain = result.isValidImpact
+    ? destroyTerrain(state.terrain, result.impactPoint, result.projectile.blastRadius)
+    : state.terrain;
+  const nextPlayers = settlePlayersOnTerrain(damagedPlayers, nextTerrain);
 
   const winnerId = nextPlayers.find((player) => player.hp <= 0)
     ? result.shooterId
@@ -176,6 +223,7 @@ export function applyLastShot(state: GameState): GameState {
       movementUsed: 0,
       shotHistory: [appliedResult, ...state.shotHistory],
       lastShot: appliedResult,
+      terrain: nextTerrain,
       winnerId,
     };
   }
@@ -186,6 +234,7 @@ export function applyLastShot(state: GameState): GameState {
     movementUsed: 0,
     shotHistory: [appliedResult, ...state.shotHistory],
     lastShot: appliedResult,
+    terrain: nextTerrain,
     winnerId: null,
   };
 }
@@ -216,6 +265,7 @@ export function moveActivePlayer(state: GameState, direction: MoveDirection): Ga
   }
 
   const activePlayer = getActivePlayer(state);
+  const nextX = roundToStep(activePlayer.tankPosition.x + direction * MOVE_STEP);
   const nextPlayers = state.players.map((player) => {
     if (player.id !== activePlayer.id) {
       return player;
@@ -226,6 +276,7 @@ export function moveActivePlayer(state: GameState, direction: MoveDirection): Ga
       tankPosition: {
         ...player.tankPosition,
         x: roundToStep(player.tankPosition.x + direction * MOVE_STEP),
+        y: findSupportY(nextX, PLAYER_START_HEIGHT, state.terrain),
       },
     };
   }) as [Player, Player];
@@ -279,12 +330,31 @@ export function createPreviewShot(state: GameState, input: ShotInput): ShotResul
   const shooter = getActivePlayer(state);
   const target = getTargetPlayer(state);
   const vertex = { x: input.vertexX, y: input.vertexY };
-  const math = calculateShotMath(
+  const baseMath = calculateShotMath(
     shooter.tankPosition,
     target.tankPosition,
     vertex,
     input.projectileType,
   );
+  const terrainImpact =
+    baseMath.validationErrors.length === 0
+      ? findProjectileTerrainImpact(
+          shooter.tankPosition,
+          baseMath.quadratic,
+          baseMath.impactPoint,
+          state.terrain,
+          PROJECTILE_TERRAIN_ARM_DISTANCE,
+        )
+      : null;
+  const math = terrainImpact
+    ? calculateShotMath(
+        shooter.tankPosition,
+        target.tankPosition,
+        vertex,
+        input.projectileType,
+        terrainImpact.point,
+      )
+    : baseMath;
 
   return {
     id: 0,
@@ -294,6 +364,7 @@ export function createPreviewShot(state: GameState, input: ShotInput): ShotResul
     ...math,
     explanation: buildExplanation(shooter, target, vertex, math),
     isApplied: false,
+    terrainImpactBlockId: terrainImpact?.blockId ?? null,
   };
 }
 

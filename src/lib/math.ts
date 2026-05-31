@@ -26,7 +26,7 @@ export const BOARD = {
   yMax: 10,
 } as const;
 
-export const BLAST_RADIUS = 2;
+export const BLAST_RADIUS = 1;
 export const MAX_DAMAGE = 20;
 export const STARTING_HP = 100;
 export const COORDINATE_STEP = 0.1;
@@ -37,7 +37,7 @@ export const PROJECTILE_TYPES = [
     id: "power",
     name: "강력탄",
     description: "맞히기 어렵지만 피해가 큰 포탄",
-    blastRadius: 1.2,
+    blastRadius: 0.6,
     maxDamage: 35,
   },
   {
@@ -51,7 +51,7 @@ export const PROJECTILE_TYPES = [
     id: "wide",
     name: "범위탄",
     description: "맞히기 쉽지만 피해가 약한 포탄",
-    blastRadius: 3,
+    blastRadius: 1.5,
     maxDamage: 12,
   },
 ] as const;
@@ -116,9 +116,23 @@ export function getYAtX(quadratic: Quadratic, x: number): number {
   return quadratic.a * (x - quadratic.h) ** 2 + quadratic.k;
 }
 
-export function calculateImpactPoint(shooter: Point, vertex: Point): Point {
+export function calculateImpactPoint(shooter: Point, vertex: Point, target?: Point): Point {
+  if (!target || nearlyEqual(shooter.y, BOARD.yMin)) {
+    return {
+      x: 2 * vertex.x - shooter.x,
+      y: 0,
+    };
+  }
+
+  const quadratic = calculateQuadratic(shooter, vertex);
+  const rootDistance = Math.sqrt(Math.max(0, -quadratic.k / quadratic.a));
+  const roots = [quadratic.h - rootDistance, quadratic.h + rootDistance];
+  const direction = Math.sign(target.x - shooter.x);
+  const directionalRoot =
+    roots.find((root) => Math.sign(root - shooter.x) === direction) ?? roots[1];
+
   return {
-    x: 2 * vertex.x - shooter.x,
+    x: directionalRoot,
     y: 0,
   };
 }
@@ -127,7 +141,8 @@ export function isImpactInBounds(point: Point): boolean {
   return (
     point.x >= BOARD.xMin - FLOAT_EPSILON &&
     point.x <= BOARD.xMax + FLOAT_EPSILON &&
-    nearlyEqual(point.y, 0)
+    point.y >= BOARD.yMin - FLOAT_EPSILON &&
+    point.y <= BOARD.yMax + FLOAT_EPSILON
   );
 }
 
@@ -170,13 +185,14 @@ export function calculateShotMath(
   target: Point,
   vertex: Point,
   projectileType: ProjectileType = "normal",
+  impactPointOverride?: Point,
 ): ShotMathResult {
   const projectile = getProjectileConfig(projectileType);
   const validationErrors = validateVertex(vertex, shooter);
   const quadratic = validationErrors.length
     ? { a: Number.NaN, h: vertex.x, k: vertex.y }
     : calculateQuadratic(shooter, vertex);
-  const impactPoint = calculateImpactPoint(shooter, vertex);
+  const impactPoint = impactPointOverride ?? calculateImpactPoint(shooter, vertex, target);
   const impactIsValid =
     validationErrors.length === 0 &&
     isImpactInBounds(impactPoint) &&

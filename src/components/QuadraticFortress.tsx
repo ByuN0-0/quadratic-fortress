@@ -62,6 +62,13 @@ import "../styles/game.css";
 const STORAGE_KEY = "quadratic-fortress-tutorial-complete";
 const DEFAULT_INPUT: ShotInput = { vertexX: 0, vertexY: 6, projectileType: "normal" };
 const HP_ANIMATION_DURATION = 600;
+const SHOT_DURATION_PER_UNIT = 70;
+const MIN_SHOT_ANIMATION_DURATION = 320;
+const MAX_SHOT_ANIMATION_DURATION = 1100;
+const FALL_DURATION_PER_UNIT = 240;
+const MIN_FALL_DURATION = 450;
+const MAX_FALL_DURATION = 1100;
+const MOVE_ANIMATION_DURATION = 180;
 
 type ScreenPoint = {
   x: number;
@@ -71,6 +78,7 @@ type ScreenPoint = {
 type CoordinateDisplayMode = "teacher" | "student";
 type DisplayHpByPlayer = Record<PlayerId, number>;
 type AimInputByPlayer = Record<PlayerId, ShotInput>;
+type Players = GameState["players"];
 
 export default function QuadraticFortress() {
   const [game, setGame] = useState<GameState>(() => createInitialGameState());
@@ -83,6 +91,9 @@ export default function QuadraticFortress() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isTrajectoryPreviewOn, setIsTrajectoryPreviewOn] = useState(false);
   const [isShotAnimating, setIsShotAnimating] = useState(false);
+  const [isFalling, setIsFalling] = useState(false);
+  const [isMoving, setIsMoving] = useState(false);
+  const [visualPlayers, setVisualPlayers] = useState<Players | null>(null);
   const [coordinateDisplayMode, setCoordinateDisplayMode] =
     useState<CoordinateDisplayMode>("teacher");
   const [displayHpByPlayer, setDisplayHpByPlayer] = useState<DisplayHpByPlayer>(() =>
@@ -91,14 +102,26 @@ export default function QuadraticFortress() {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<number | null>(null);
+  const fallFrameRef = useRef<number | null>(null);
+  const moveFrameRef = useRef<number | null>(null);
   const hpFrameRef = useRef<number | null>(null);
+  const gameRef = useRef<GameState>(game);
   const displayHpRef = useRef<DisplayHpByPlayer>(displayHpByPlayer);
 
-  const activePlayer = getActivePlayer(game);
-  const targetPlayer = getTargetPlayer(game);
+  const renderGame = useMemo(
+    () => (visualPlayers ? { ...game, players: visualPlayers } : game),
+    [game, visualPlayers],
+  );
+  const activePlayer = getActivePlayer(renderGame);
+  const targetPlayer = getTargetPlayer(renderGame);
   const activeInput = aimInputByPlayer[game.activePlayerId];
   const previewShot = useMemo(() => createPreviewShot(game, activeInput), [game, activeInput]);
   const visibleShot = game.lastShot ?? previewShot;
+  const isInteractionLocked = isShotAnimating || isFalling || isMoving;
+
+  useEffect(() => {
+    gameRef.current = game;
+  }, [game]);
 
   useEffect(() => {
     const completed =
@@ -113,8 +136,11 @@ export default function QuadraticFortress() {
       return;
     }
 
+    const shooterPosition =
+      game.players.find((player) => player.id === game.lastShot?.shooterId)?.tankPosition ??
+      getActivePlayer(game).tankPosition;
     const startedAt = performance.now();
-    const duration = 1100;
+    const duration = getShotAnimationDuration(game.lastShot, shooterPosition);
 
     const tick = (now: number) => {
       const progress = Math.min(1, (now - startedAt) / duration);
@@ -125,8 +151,17 @@ export default function QuadraticFortress() {
         return;
       }
 
-      setIsShotAnimating(false);
-      setGame((current) => applyLastShot(current));
+      const current = gameRef.current;
+      const applied = applyLastShot(current);
+      const fallingPlayers = getFallingPlayers(current.players, applied.players);
+
+      if (fallingPlayers.length === 0) {
+        setIsShotAnimating(false);
+        setGame(applied);
+        return;
+      }
+
+      animateFallingPlayers(current, applied, fallingPlayers);
     };
 
     setAnimationProgress(0);
@@ -226,7 +261,7 @@ export default function QuadraticFortress() {
         ctx,
         width,
         height,
-        game,
+        renderGame,
         previewShot,
         visibleShot,
         displayHpByPlayer,
@@ -246,7 +281,7 @@ export default function QuadraticFortress() {
 
     return () => observer.disconnect();
   }, [
-    game,
+    renderGame,
     previewShot,
     visibleShot,
     displayHpByPlayer,
@@ -255,8 +290,137 @@ export default function QuadraticFortress() {
     coordinateDisplayMode,
   ]);
 
+  const animateFallingPlayers = (
+    startGame: GameState,
+    endGame: GameState,
+    fallingPlayerIds: PlayerId[],
+  ) => {
+    if (fallFrameRef.current) {
+      cancelAnimationFrame(fallFrameRef.current);
+    }
+
+    const startPlayers = startGame.players;
+    const endPlayers = endGame.players;
+    const maxDropDistance = fallingPlayerIds.reduce((maxDistance, id) => {
+      const startPlayer = startPlayers.find((player) => player.id === id);
+      const endPlayer = endPlayers.find((player) => player.id === id);
+      if (!startPlayer || !endPlayer) {
+        return maxDistance;
+      }
+
+      return Math.max(maxDistance, startPlayer.tankPosition.y - endPlayer.tankPosition.y);
+    }, 0);
+    const duration = Math.max(
+      MIN_FALL_DURATION,
+      Math.min(MAX_FALL_DURATION, maxDropDistance * FALL_DURATION_PER_UNIT),
+    );
+    const interimGame = {
+      ...endGame,
+      activePlayerId: startGame.activePlayerId,
+      players: endPlayers.map((player) => ({
+        ...player,
+        isActive: player.id === startGame.activePlayerId,
+      })) as Players,
+    };
+
+    setIsFalling(true);
+    setVisualPlayers(startPlayers);
+    setGame(interimGame);
+
+    const startedAt = performance.now();
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const easedProgress = 1 - (1 - progress) ** 2;
+      const nextPlayers = endPlayers.map((endPlayer) => {
+        const startPlayer = startPlayers.find((player) => player.id === endPlayer.id) ?? endPlayer;
+
+        if (!fallingPlayerIds.includes(endPlayer.id)) {
+          return endPlayer;
+        }
+
+        return {
+          ...endPlayer,
+          isActive: endPlayer.id === startGame.activePlayerId,
+          tankPosition: {
+            x: endPlayer.tankPosition.x,
+            y:
+              startPlayer.tankPosition.y +
+              (endPlayer.tankPosition.y - startPlayer.tankPosition.y) * easedProgress,
+          },
+        };
+      }) as Players;
+
+      setVisualPlayers(nextPlayers);
+
+      if (progress < 1) {
+        fallFrameRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      setVisualPlayers(null);
+      setIsFalling(false);
+      setIsShotAnimating(false);
+      setGame(endGame);
+    };
+
+    fallFrameRef.current = requestAnimationFrame(tick);
+  };
+
+  const animateMovingPlayer = (startGame: GameState, endGame: GameState, playerId: PlayerId) => {
+    if (moveFrameRef.current) {
+      cancelAnimationFrame(moveFrameRef.current);
+    }
+
+    const startPlayer = startGame.players.find((player) => player.id === playerId);
+    const endPlayer = endGame.players.find((player) => player.id === playerId);
+
+    if (!startPlayer || !endPlayer) {
+      setGame(endGame);
+      return;
+    }
+
+    setIsMoving(true);
+    setVisualPlayers(startGame.players);
+
+    const startedAt = performance.now();
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / MOVE_ANIMATION_DURATION);
+      const easedProgress = 1 - (1 - progress) ** 2;
+      const nextPlayers = endGame.players.map((player) => {
+        if (player.id !== playerId) {
+          return player;
+        }
+
+        return {
+          ...player,
+          tankPosition: {
+            x:
+              startPlayer.tankPosition.x +
+              (endPlayer.tankPosition.x - startPlayer.tankPosition.x) * easedProgress,
+            y:
+              startPlayer.tankPosition.y +
+              (endPlayer.tankPosition.y - startPlayer.tankPosition.y) * easedProgress,
+          },
+        };
+      }) as Players;
+
+      setVisualPlayers(nextPlayers);
+
+      if (progress < 1) {
+        moveFrameRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      setVisualPlayers(null);
+      setIsMoving(false);
+      setGame(endGame);
+    };
+
+    moveFrameRef.current = requestAnimationFrame(tick);
+  };
+
   const fire = () => {
-    if (isShotAnimating) {
+    if (isInteractionLocked) {
       return;
     }
 
@@ -277,11 +441,17 @@ export default function QuadraticFortress() {
   };
 
   const moveTank = (direction: MoveDirection) => {
-    if (isShotAnimating) {
+    if (isInteractionLocked) {
       return;
     }
 
-    setGame((current) => moveActivePlayer(current, direction));
+    const current = gameRef.current;
+    const next = moveActivePlayer(current, direction);
+    if (next === current) {
+      return;
+    }
+
+    animateMovingPlayer(current, next, current.activePlayerId);
     setIsResultOpen(false);
   };
 
@@ -292,6 +462,12 @@ export default function QuadraticFortress() {
     if (hpFrameRef.current) {
       cancelAnimationFrame(hpFrameRef.current);
     }
+    if (fallFrameRef.current) {
+      cancelAnimationFrame(fallFrameRef.current);
+    }
+    if (moveFrameRef.current) {
+      cancelAnimationFrame(moveFrameRef.current);
+    }
 
     setGame(createInitialGameState());
     setAimInputByPlayer(createInitialAimInputByPlayer());
@@ -300,6 +476,9 @@ export default function QuadraticFortress() {
     setIsHistoryOpen(false);
     setIsTrajectoryPreviewOn(false);
     setIsShotAnimating(false);
+    setIsFalling(false);
+    setIsMoving(false);
+    setVisualPlayers(null);
     displayHpRef.current = { p1: STARTING_HP, p2: STARTING_HP };
     setDisplayHpByPlayer({ p1: STARTING_HP, p2: STARTING_HP });
   };
@@ -393,7 +572,7 @@ export default function QuadraticFortress() {
         <AimControls
           game={game}
           input={activeInput}
-          isShotAnimating={isShotAnimating}
+          isShotAnimating={isInteractionLocked}
           onFire={fire}
           onHistory={() => setIsHistoryOpen(true)}
           onInputChange={updateActiveInput}
@@ -660,7 +839,7 @@ function AimControls({
 
 function getMoveStatus(game: GameState, remainingMove: number, isShotAnimating: boolean): string {
   if (isShotAnimating) {
-    return "포탄 이동 중";
+    return "처리 중";
   }
 
   if (game.winnerId) {
@@ -700,6 +879,43 @@ function createInitialAimInputByPlayer(): AimInputByPlayer {
     p1: { ...DEFAULT_INPUT },
     p2: { ...DEFAULT_INPUT },
   };
+}
+
+function getFallingPlayers(startPlayers: Players, endPlayers: Players): PlayerId[] {
+  return endPlayers
+    .filter((endPlayer) => {
+      const startPlayer = startPlayers.find((player) => player.id === endPlayer.id);
+      return startPlayer ? endPlayer.tankPosition.y < startPlayer.tankPosition.y : false;
+    })
+    .map((player) => player.id);
+}
+
+function getShotAnimationDuration(shot: ShotResult, shooterPosition: Point): number {
+  const travelDistance = estimateShotTravelDistance(shot, shooterPosition);
+  return Math.max(
+    MIN_SHOT_ANIMATION_DURATION,
+    Math.min(MAX_SHOT_ANIMATION_DURATION, travelDistance * SHOT_DURATION_PER_UNIT),
+  );
+}
+
+function estimateShotTravelDistance(shot: ShotResult, shooterPosition: Point): number {
+  if (!Number.isFinite(shot.quadratic.a) || shot.validationErrors.length > 0) {
+    return 0;
+  }
+
+  const steps = 24;
+  let distance = 0;
+  let previous = shooterPosition;
+
+  for (let index = 1; index <= steps; index += 1) {
+    const progress = index / steps;
+    const x = shooterPosition.x + (shot.impactPoint.x - shooterPosition.x) * progress;
+    const point = { x, y: getYAtX(shot.quadratic, x) };
+    distance += Math.hypot(point.x - previous.x, point.y - previous.y);
+    previous = point;
+  }
+
+  return distance;
 }
 
 function RangeControl({
@@ -1010,7 +1226,7 @@ const TUTORIAL_DETAILS = [
   {
     title: "4. 원 안의 거리로 피해 계산",
     formula: "(x - 8)² + (y - 0)² ≤ 2², d = 0",
-    lines: ["반지름 2 안에 목표 중심이 들어오면 피해가 생깁니다.", "damage = round(20 × (1 - 0 / 2)) = 20입니다."],
+    lines: ["반지름 1 안에 목표 중심이 들어오면 피해가 생깁니다.", "damage = round(20 × (1 - 0 / 1)) = 20입니다."],
   },
 ] as const;
 
@@ -1289,12 +1505,13 @@ function drawBoard(
   ctx.fillRect(0, 0, width, height);
 
   drawGrid(ctx, rc, width, height, margin, toScreen, coordinateDisplayMode);
+  drawTerrain(ctx, rc, toScreen, game.terrain);
   const shotShooterPosition =
     game.players.find((player) => player.id === visibleShot.shooterId)?.tankPosition ??
     getActivePlayer(game).tankPosition;
   const previewShooterPosition = getActivePlayer(game).tankPosition;
 
-  if (hasFiredShot && visibleShot.isValidImpact) {
+  if (hasFiredShot && visibleShot.validationErrors.length === 0) {
     drawTrajectory(
       ctx,
       toScreen,
@@ -1304,7 +1521,9 @@ function drawBoard(
       false,
       animationProgress,
     );
-    drawBlast(rc, toScreen, visibleShot);
+    if (visibleShot.isValidImpact) {
+      drawBlast(rc, toScreen, visibleShot);
+    }
   }
 
   if (showTrajectoryPreview) {
@@ -1409,6 +1628,56 @@ function drawGrid(
     roughness: 1.2,
     fill: "transparent",
   });
+}
+
+function drawTerrain(
+  ctx: CanvasRenderingContext2D,
+  rc: ReturnType<typeof rough.canvas>,
+  toScreen: (point: Point) => ScreenPoint,
+  terrain: GameState["terrain"],
+) {
+  for (const segment of terrain.segments) {
+    const topLeft = toScreen({ x: segment.x1, y: segment.y1 });
+    const topRight = toScreen({ x: segment.x2, y: segment.y2 });
+    const bottomRight = toScreen({ x: segment.x2, y: segment.y2 - 0.5 });
+    const bottomLeft = toScreen({ x: segment.x1, y: segment.y1 - 0.5 });
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(topLeft.x, topLeft.y);
+    ctx.lineTo(topRight.x, topRight.y);
+    ctx.lineTo(bottomRight.x, bottomRight.y);
+    ctx.lineTo(bottomLeft.x, bottomLeft.y);
+    ctx.closePath();
+    ctx.fillStyle = "#fde68a";
+    ctx.strokeStyle = "#202124";
+    ctx.lineWidth = 2;
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "rgba(180, 83, 9, 0.18)";
+    ctx.fill();
+    ctx.restore();
+  }
+
+  for (const block of terrain.blocks) {
+    const topLeft = toScreen({ x: block.x, y: block.y + block.height });
+    const bottomRight = toScreen({ x: block.x + block.width, y: block.y });
+    const width = bottomRight.x - topLeft.x;
+    const height = bottomRight.y - topLeft.y;
+
+    rc.rectangle(topLeft.x, topLeft.y, width, height, {
+      stroke: "#202124",
+      strokeWidth: 1.8,
+      roughness: 1.2,
+      fill: "#fde68a",
+      fillStyle: "solid",
+    });
+
+    ctx.save();
+    ctx.fillStyle = "rgba(180, 83, 9, 0.18)";
+    ctx.fillRect(topLeft.x, topLeft.y, width, height);
+    ctx.restore();
+  }
 }
 
 function drawTrajectory(
@@ -1565,7 +1834,7 @@ function drawShell(
   shooterPosition: Point,
   progress: number,
 ) {
-  if (!shot.isValidImpact || !Number.isFinite(shot.quadratic.a)) {
+  if (!Number.isFinite(shot.quadratic.a) || shot.validationErrors.length > 0) {
     return;
   }
 

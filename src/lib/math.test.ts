@@ -56,16 +56,14 @@ describe("quadratic math", () => {
   });
 
   it("calculates Euclidean distance", () => {
-    expect(distance({ x: 0, y: 0 }, { x: 1, y: Math.sqrt(3) })).toBeCloseTo(
-      BLAST_RADIUS,
-    );
+    expect(distance({ x: 0, y: 0 }, { x: BLAST_RADIUS, y: 0 })).toBeCloseTo(BLAST_RADIUS);
   });
 
   it("calculates linear radial damage and clamps it", () => {
     expect(calculateDamage(0)).toBe(20);
-    expect(calculateDamage(1)).toBe(10);
+    expect(calculateDamage(0.5)).toBe(10);
+    expect(calculateDamage(1)).toBe(0);
     expect(calculateDamage(2)).toBe(0);
-    expect(calculateDamage(3)).toBe(0);
   });
 
   it("calculates damage by projectile type", () => {
@@ -76,8 +74,8 @@ describe("quadratic math", () => {
     expect(calculateDamage(0, power)).toBe(35);
     expect(calculateDamage(0, normal)).toBe(20);
     expect(calculateDamage(0, wide)).toBe(12);
-    expect(calculateDamage(1.2, power)).toBe(0);
-    expect(calculateDamage(3, wide)).toBe(0);
+    expect(calculateDamage(0.6, power)).toBe(0);
+    expect(calculateDamage(1.5, wide)).toBe(0);
     expect(PROJECTILE_TYPES.map((projectile) => projectile.id)).toEqual([
       "power",
       "normal",

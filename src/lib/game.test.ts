@@ -12,6 +12,13 @@ import {
 } from "./game";
 
 describe("game reducer", () => {
+  it("starts players by dropping from the top onto air terrain", () => {
+    const state = createInitialGameState();
+
+    expect(state.players[0].tankPosition).toEqual({ x: -8, y: 2.5 });
+    expect(state.players[1].tankPosition).toEqual({ x: 8, y: 2.5 });
+  });
+
   it("switches turn and applies damage after a valid shot", () => {
     const next = submitShot(createInitialGameState(), { vertexX: 0, vertexY: 6 });
 
@@ -28,9 +35,29 @@ describe("game reducer", () => {
       projectileType: "power",
     });
 
-    expect(next.players[1].hp).toBe(65);
+    expect(next.players[1].hp).toBe(66);
     expect(next.shotHistory[0].projectile.id).toBe("power");
-    expect(next.shotHistory[0].damage).toBe(35);
+    expect(next.shotHistory[0].damage).toBe(34);
+  });
+
+  it("explodes on air terrain before reaching the ground impact", () => {
+    const state = {
+      ...createInitialGameState(),
+      terrain: {
+        blocks: [{ id: "test-platform", x: -4.3, y: 4.9, width: 0.8, height: 0.5 }],
+        segments: [] as ReturnType<typeof createInitialGameState>["terrain"]["segments"],
+      },
+    };
+    const prepared = prepareShot(state, { vertexX: 0, vertexY: 6 });
+
+    expect(prepared.lastShot?.terrainImpactBlockId).toBe("test-platform");
+    expect(prepared.lastShot?.impactPoint.y).toBeGreaterThan(0);
+
+    const applied = applyLastShot(prepared);
+    const remainingWidth = applied.terrain.blocks.reduce((total, block) => total + block.width, 0);
+    expect(remainingWidth).toBeLessThan(state.terrain.blocks[0].width);
+    expect(applied.players[1].hp).toBe(100);
+    expect(applied.activePlayerId).toBe("p2");
   });
 
   it("keeps turn and HP unchanged after invalid input", () => {
@@ -159,7 +186,23 @@ describe("game reducer", () => {
   });
 
   it("declares a winner when target HP reaches zero", () => {
-    let state = createInitialGameState();
+    let state = {
+      ...createInitialGameState(),
+      players: [
+        {
+          ...createInitialGameState().players[0],
+          tankPosition: { x: -8, y: 0 },
+        },
+        {
+          ...createInitialGameState().players[1],
+          tankPosition: { x: 8, y: 0 },
+        },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+      terrain: {
+        blocks: [] as ReturnType<typeof createInitialGameState>["terrain"]["blocks"],
+        segments: [] as ReturnType<typeof createInitialGameState>["terrain"]["segments"],
+      },
+    };
 
     for (let turn = 0; turn < 8; turn += 1) {
       state = submitShot(state, { vertexX: 0, vertexY: 6 });
