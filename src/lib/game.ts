@@ -28,7 +28,26 @@ import {
 } from "./terrain";
 
 export type PlayerId = "p1" | "p2";
-export type GameMode = "normal" | "ocean";
+export type GameMode = "normal" | "ocean" | "practice";
+export type PracticeStageNumber = 1 | 2 | 3;
+
+export type PracticeStageConfig = {
+  step: PracticeStageNumber;
+  title: string;
+  message: string;
+  problem: string;
+  defaultInput: ShotInput;
+  p1Position: Point;
+  targetPosition: Point;
+  targetHp: number;
+  terrain: TerrainState;
+};
+
+export type PracticeState = {
+  step: PracticeStageNumber;
+  isComplete: boolean;
+  pendingNextStep: PracticeStageNumber | null;
+};
 
 export type Player = {
   id: PlayerId;
@@ -75,6 +94,7 @@ export type GameState = {
   mode: GameMode;
   mapId: TerrainMapId;
   winnerId: PlayerId | null;
+  practice: PracticeState | null;
 };
 
 export const MAX_TURN_MOVE = 3;
@@ -82,11 +102,75 @@ export const MOVE_STEP = 0.1;
 export const PLAYER_START_HEIGHT = BOARD.yMax;
 export const PROJECTILE_TERRAIN_ARM_DISTANCE = 0.7;
 export const MAX_TANK_TERRAIN_SLOPE = 1;
+export const MAX_TANK_STEP_UP_HEIGHT = 0.4;
+export const BACKWARD_AIM_MESSAGE =
+  "뒤쪽으로는 조준할 수 없습니다. 꼭짓점을 상대 방향으로 이동하세요.";
+
+const SIDE_WALL_TOLERANCE = 0.02;
+const TANK_SIDE_BODY_HEIGHT = 0.75;
+
+export const PRACTICE_STAGES: PracticeStageConfig[] = [
+  {
+    step: 1,
+    title: "꼭짓점 좌표 조절",
+    message:
+      "슬라이더를 움직이면 포탄 궤적의 꼭짓점 좌표를 조절할 수 있습니다. 벽을 넘으면서 목표물을 맞힐 수 있도록 꼭짓점을 조절해 보세요.",
+    problem:
+      "현재 (-8, 0)에 대포가 위치해 있고, 목표물은 (8, 0)에 위치해 있다. 좌표평면상에 [-1, 1]×[0, 6]의 벽이 있을 때, 목표물을 타격하기 위한 꼭짓점의 좌표를 구하시오.",
+    defaultInput: { vertexX: 0, vertexY: 5, projectileType: "normal" },
+    p1Position: { x: -8, y: 0 },
+    targetPosition: { x: 8, y: 0 },
+    targetHp: 1,
+    terrain: {
+      blocks: [{ id: "practice-1-wall", x: -1, y: 0, width: 2, height: 6 }],
+      segments: [],
+      holes: [],
+    },
+  },
+  {
+    step: 2,
+    title: "대포 이동과 그래프의 평행이동",
+    message:
+      "MOVE의 좌우 화살표를 누르면 대포를 0.1칸씩 이동할 수 있습니다. 대포가 이동하면 같은 꼭짓점으로 조준하더라도 포탄 궤적의 위치가 달라집니다.",
+    problem:
+      "현재 (-8, 0)에 대포가 위치해 있고, 목표물은 (6, 0)에 위치해 있다. 좌표평면상에 [-1, 1]×[0, 6]의 벽이 있을 때, 위의 문제 상황과 동일한 조준점으로 조준하여 목표물을 타격하기 위해 대포를 얼마나 이동시켜야 하는지 구하시오.",
+    defaultInput: { vertexX: 0, vertexY: 7, projectileType: "normal" },
+    p1Position: { x: -8, y: 0 },
+    targetPosition: { x: 6, y: 0 },
+    targetHp: 1,
+    terrain: {
+      blocks: [{ id: "practice-2-wall", x: -1, y: 0, width: 2, height: 6 }],
+      segments: [],
+      holes: [],
+    },
+  },
+  {
+    step: 3,
+    title: "파괴 가능한 지형과 포탄 종류",
+    message:
+      "포탄에는 종류가 있습니다. 강력탄은 피해가 크지만 폭발 범위가 좁고, 범위탄은 피해가 약하지만 폭발 범위가 넓습니다. 일부 지형은 포탄에 맞으면 파괴됩니다. 목표물의 체력을 모두 깎으면 연습 모드가 종료됩니다.",
+    problem:
+      "벽을 파괴하거나 넘기며 목표물의 체력을 모두 깎아 보세요. 포탄 종류에 따라 폭발 반경과 피해량이 달라집니다.",
+    defaultInput: { vertexX: 0, vertexY: 10, projectileType: "normal" },
+    p1Position: { x: -8, y: 0 },
+    targetPosition: { x: 8, y: 0 },
+    targetHp: 35,
+    terrain: {
+      blocks: [{ id: "practice-3-wall", x: 0, y: 0, width: 1, height: 10 }],
+      segments: [],
+      holes: [],
+    },
+  },
+];
 
 export function createInitialGameState(
   mode: GameMode = "normal",
   mapId: TerrainMapId = "map1",
 ): GameState {
+  if (mode === "practice") {
+    return createPracticeGameState(1);
+  }
+
   const terrain = createInitialTerrain(mapId);
   const p1StartX = -8;
   const p2StartX = 8;
@@ -122,7 +206,59 @@ export function createInitialGameState(
     mode,
     mapId,
     winnerId: null,
+    practice: null,
   };
+}
+
+export function createPracticeGameState(
+  step: PracticeStageNumber = 1,
+  shotHistory: ShotResult[] = [],
+): GameState {
+  const stage = getPracticeStage(step);
+
+  return {
+    players: [
+      {
+        id: "p1",
+        name: "1P",
+        tankPosition: { ...stage.p1Position },
+        hp: STARTING_HP,
+        isActive: true,
+      },
+      {
+        id: "p2",
+        name: "목표물",
+        tankPosition: { ...stage.targetPosition },
+        hp: stage.targetHp,
+        isActive: false,
+      },
+    ],
+    activePlayerId: "p1",
+    movementUsed: 0,
+    shotHistory,
+    lastShot: null,
+    terrain: cloneTerrain(stage.terrain),
+    mode: "practice",
+    mapId: "map1",
+    winnerId: null,
+    practice: {
+      step,
+      isComplete: false,
+      pendingNextStep: null,
+    },
+  };
+}
+
+export function getPracticeStage(step: PracticeStageNumber): PracticeStageConfig {
+  return PRACTICE_STAGES.find((stage) => stage.step === step) ?? PRACTICE_STAGES[0];
+}
+
+export function continuePracticeAfterSuccess(state: GameState): GameState {
+  if (state.mode !== "practice" || !state.practice?.pendingNextStep) {
+    return state;
+  }
+
+  return createPracticeGameState(state.practice.pendingNextStep, state.shotHistory);
 }
 
 export function getActivePlayer(state: GameState): Player {
@@ -145,18 +281,24 @@ export function prepareShot(state: GameState, input: ShotInput): GameState {
   const shooter = getActivePlayer(state);
   const target = getTargetPlayer(state);
   const vertex = { x: input.vertexX, y: input.vertexY };
+  const directionErrors = validateAimDirection(shooter, vertex);
   const baseMath = calculateShotMath(
     shooter.tankPosition,
     target.tankPosition,
     vertex,
     input.projectileType,
   );
+  const checkedMath = {
+    ...baseMath,
+    isValidImpact: directionErrors.length > 0 ? false : baseMath.isValidImpact,
+    validationErrors: [...directionErrors, ...baseMath.validationErrors],
+  };
   const terrainImpact =
-    baseMath.validationErrors.length === 0
+    checkedMath.validationErrors.length === 0
       ? findProjectileTerrainImpact(
           shooter.tankPosition,
-          baseMath.quadratic,
-          baseMath.impactPoint,
+          checkedMath.quadratic,
+          checkedMath.impactPoint,
           state.terrain,
           PROJECTILE_TERRAIN_ARM_DISTANCE,
         )
@@ -169,7 +311,7 @@ export function prepareShot(state: GameState, input: ShotInput): GameState {
         input.projectileType,
         terrainImpact.point,
       )
-    : baseMath;
+    : checkedMath;
   const result: ShotResult = {
     id: state.shotHistory.length + 1,
     shooterId: shooter.id,
@@ -226,7 +368,7 @@ export function applyLastShot(state: GameState): GameState {
   const nextTerrain = result.isValidImpact
     ? destroyTerrain(state.terrain, result.impactPoint, result.projectile.blastRadius)
     : state.terrain;
-  const hasBaseTerrain = state.mode === "normal";
+  const hasBaseTerrain = hasSafeBaseTerrain(state);
   const nextPlayers = settlePlayersOnTerrain(damagedPlayers, nextTerrain, hasBaseTerrain);
   const fallenPlayer = state.mode === "ocean"
     ? nextPlayers.find((player) => player.tankPosition.y <= OCEAN_FALL_Y)
@@ -247,6 +389,10 @@ export function applyLastShot(state: GameState): GameState {
         : null;
 
   if (winnerId) {
+    if (state.mode === "practice" && state.practice) {
+      return advancePracticeAfterTargetDefeat(state, appliedResult);
+    }
+
     return {
       players: resolvedPlayers.map((player) => ({ ...player, isActive: player.id === winnerId })) as [
         Player,
@@ -260,6 +406,25 @@ export function applyLastShot(state: GameState): GameState {
       mode: state.mode,
       mapId: state.mapId,
       winnerId,
+      practice: state.practice,
+    };
+  }
+
+  if (state.mode === "practice" && state.practice) {
+    return {
+      players: resolvedPlayers.map((player) => ({
+        ...player,
+        isActive: player.id === "p1",
+      })) as [Player, Player],
+      activePlayerId: "p1",
+      movementUsed: 0,
+      shotHistory: [appliedResult, ...state.shotHistory],
+      lastShot: appliedResult,
+      terrain: nextTerrain,
+      mode: state.mode,
+      mapId: state.mapId,
+      winnerId: null,
+      practice: state.practice,
     };
   }
 
@@ -273,6 +438,7 @@ export function applyLastShot(state: GameState): GameState {
     mode: state.mode,
     mapId: state.mapId,
     winnerId: null,
+    practice: state.practice,
   };
 }
 
@@ -288,11 +454,6 @@ export function canMoveActivePlayer(state: GameState, direction: MoveDirection):
   const activePlayer = getActivePlayer(state);
   const targetPlayer = getTargetPlayer(state);
   const nextX = roundToStep(activePlayer.tankPosition.x + direction * MOVE_STEP);
-  const rawNextSupport = findSupportAtX(
-    nextX,
-    activePlayer.tankPosition.y + MAX_TANK_TERRAIN_SLOPE * MOVE_STEP,
-    state.terrain,
-  );
   const currentSupport = findReachableTankSupport(
     state,
     activePlayer.tankPosition.x,
@@ -300,25 +461,35 @@ export function canMoveActivePlayer(state: GameState, direction: MoveDirection):
   );
   const nextSupport = findReachableTankSupport(state, nextX, activePlayer.tankPosition.y);
   const nextSlope = nextSupport?.slope ?? 0;
-  const climbSlope =
-    currentSupport && nextSupport
-      ? (nextSupport.y - currentSupport.y) / MOVE_STEP
-      : -Infinity;
-  const isBlockedByNearbyWall =
+  const heightDelta = currentSupport && nextSupport ? nextSupport.y - currentSupport.y : -Infinity;
+  const destinationY = nextSupport?.y ?? (hasSafeBaseTerrain(state) ? BOARD.yMin : OCEAN_FALL_Y);
+  const isBlockedBySideWall =
     currentSupport !== null &&
-    rawNextSupport === null &&
-    state.mode === "normal" &&
-    isNearbyTerrainWallAhead(state, nextX, direction, currentSupport.y);
+    isTerrainSideWallInMovePath(
+      state,
+      activePlayer.tankPosition.x,
+      nextX,
+      direction,
+      currentSupport.y,
+      destinationY,
+      heightDelta,
+    );
+  const isBlockedByHoleWall =
+    currentSupport !== null &&
+    hasSafeBaseTerrain(state) &&
+    state.terrain.holes.length > 0 &&
+    isNearbyHoleWallAhead(state, nextX, direction, currentSupport.y);
 
   return (
     nextX >= BOARD.xMin &&
     nextX <= BOARD.xMax &&
     !nearlyEqual(nextX, targetPlayer.tankPosition.x) &&
     currentSupport !== null &&
-    !isBlockedByNearbyWall &&
+    !isBlockedBySideWall &&
+    !isBlockedByHoleWall &&
     Math.abs(currentSupport.slope) <= MAX_TANK_TERRAIN_SLOPE &&
     Math.abs(nextSlope) <= MAX_TANK_TERRAIN_SLOPE &&
-    climbSlope <= MAX_TANK_TERRAIN_SLOPE + 0.01
+    heightDelta <= MAX_TANK_STEP_UP_HEIGHT + 0.01
   );
 }
 
@@ -340,7 +511,7 @@ export function moveActivePlayer(state: GameState, direction: MoveDirection): Ga
       tankPosition: {
         ...player.tankPosition,
         x: roundToStep(player.tankPosition.x + direction * MOVE_STEP),
-        y: nextSupport?.y ?? (state.mode === "normal" ? BOARD.yMin : OCEAN_FALL_Y),
+        y: nextSupport?.y ?? (hasSafeBaseTerrain(state) ? BOARD.yMin : OCEAN_FALL_Y),
       },
     };
   }) as [Player, Player];
@@ -402,18 +573,24 @@ export function createPreviewShot(state: GameState, input: ShotInput): ShotResul
   const shooter = getActivePlayer(state);
   const target = getTargetPlayer(state);
   const vertex = { x: input.vertexX, y: input.vertexY };
+  const directionErrors = validateAimDirection(shooter, vertex);
   const baseMath = calculateShotMath(
     shooter.tankPosition,
     target.tankPosition,
     vertex,
     input.projectileType,
   );
+  const checkedMath = {
+    ...baseMath,
+    isValidImpact: directionErrors.length > 0 ? false : baseMath.isValidImpact,
+    validationErrors: [...directionErrors, ...baseMath.validationErrors],
+  };
   const terrainImpact =
-    baseMath.validationErrors.length === 0
+    checkedMath.validationErrors.length === 0
       ? findProjectileTerrainImpact(
           shooter.tankPosition,
-          baseMath.quadratic,
-          baseMath.impactPoint,
+          checkedMath.quadratic,
+          checkedMath.impactPoint,
           state.terrain,
           PROJECTILE_TERRAIN_ARM_DISTANCE,
         )
@@ -426,7 +603,7 @@ export function createPreviewShot(state: GameState, input: ShotInput): ShotResul
         input.projectileType,
         terrainImpact.point,
       )
-    : baseMath;
+    : checkedMath;
 
   return {
     id: 0,
@@ -444,8 +621,79 @@ export function createPreviewShot(state: GameState, input: ShotInput): ShotResul
   };
 }
 
+function validateAimDirection(shooter: Player, vertex: Point): string[] {
+  if (shooter.id === "p1" && vertex.x <= shooter.tankPosition.x) {
+    return [BACKWARD_AIM_MESSAGE];
+  }
+
+  if (shooter.id === "p2" && vertex.x >= shooter.tankPosition.x) {
+    return [BACKWARD_AIM_MESSAGE];
+  }
+
+  return [];
+}
+
 function getOpponentId(playerId: PlayerId): PlayerId {
   return playerId === "p1" ? "p2" : "p1";
+}
+
+function advancePracticeAfterTargetDefeat(
+  state: GameState,
+  appliedResult: ShotResult,
+): GameState {
+  if (!state.practice) {
+    return state;
+  }
+
+  const nextHistory = [appliedResult, ...state.shotHistory];
+
+  if (state.practice.step < 3) {
+    return {
+      ...state,
+      players: state.players.map((player) => ({
+        ...player,
+        hp: player.id === appliedResult.targetId ? 0 : player.hp,
+        isActive: player.id === "p1",
+      })) as [Player, Player],
+      activePlayerId: "p1",
+      movementUsed: 0,
+      shotHistory: nextHistory,
+      lastShot: appliedResult,
+      winnerId: null,
+      practice: {
+        step: state.practice.step,
+        isComplete: false,
+        pendingNextStep: (state.practice.step + 1) as PracticeStageNumber,
+      },
+    };
+  }
+
+  return {
+    ...state,
+    players: state.players.map((player) => ({
+      ...player,
+      hp: player.id === appliedResult.targetId ? 0 : player.hp,
+      isActive: player.id === "p1",
+    })) as [Player, Player],
+    activePlayerId: "p1",
+    movementUsed: 0,
+    shotHistory: nextHistory,
+    lastShot: appliedResult,
+    winnerId: null,
+    practice: {
+      step: 3,
+      isComplete: true,
+      pendingNextStep: null,
+    },
+  };
+}
+
+function cloneTerrain(terrain: TerrainState): TerrainState {
+  return {
+    blocks: terrain.blocks.map((block) => ({ ...block })),
+    segments: terrain.segments.map((segment) => ({ ...segment })),
+    holes: terrain.holes.map((hole) => ({ ...hole })),
+  };
 }
 
 function findReachableTankSupport(
@@ -456,14 +704,58 @@ function findReachableTankSupport(
   const maxReachY = currentY + MAX_TANK_TERRAIN_SLOPE * MOVE_STEP;
   const support = findSupportAtX(x, maxReachY, state.terrain);
 
-  if (support || state.mode !== "normal") {
+  if (support || !hasSafeBaseTerrain(state)) {
     return support;
   }
 
   return { y: BOARD.yMin, slope: 0 };
 }
 
-function isNearbyTerrainWallAhead(
+function hasSafeBaseTerrain(state: GameState): boolean {
+  return state.mode === "normal" || state.mode === "practice";
+}
+
+function isTerrainSideWallInMovePath(
+  state: GameState,
+  currentX: number,
+  nextX: number,
+  direction: MoveDirection,
+  currentY: number,
+  destinationY: number,
+  heightDelta: number,
+): boolean {
+  const pathMin = Math.min(currentX, nextX) - SIDE_WALL_TOLERANCE;
+  const pathMax = Math.max(currentX, nextX) + SIDE_WALL_TOLERANCE;
+  const bodyBottom = currentY + SIDE_WALL_TOLERANCE;
+  const bodyTop = currentY + TANK_SIDE_BODY_HEIGHT;
+
+  return state.terrain.blocks.some((block) => {
+    const faceX = direction === 1 ? block.x : block.x + block.width;
+    const blockTop = block.y + block.height;
+    const blockBottom = block.y;
+
+    if (faceX < pathMin || faceX > pathMax) {
+      return false;
+    }
+
+    const overlapsTankSide =
+      blockTop >= bodyBottom - SIDE_WALL_TOLERANCE &&
+      blockBottom <= bodyTop + SIDE_WALL_TOLERANCE;
+
+    if (!overlapsTankSide) {
+      return false;
+    }
+
+    const isSmallStepOntoTop =
+      destinationY >= blockTop - SIDE_WALL_TOLERANCE &&
+      heightDelta >= -SIDE_WALL_TOLERANCE &&
+      heightDelta <= MAX_TANK_STEP_UP_HEIGHT + SIDE_WALL_TOLERANCE;
+
+    return !isSmallStepOntoTop;
+  });
+}
+
+function isNearbyHoleWallAhead(
   state: GameState,
   nextX: number,
   direction: MoveDirection,

@@ -3,4 +3,13 @@ import react from "@astrojs/react";
 
 export default defineConfig({
   integrations: [react()],
+  vite: {
+    optimizeDeps: {
+      esbuildOptions: {
+        define: {
+          "process.env.NODE_ENV": '"development"',
+        },
+      },
+    },
+  },
 });

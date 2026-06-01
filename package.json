@@ -4,7 +4,7 @@
   "description": "A middle-school math artillery game built with Astro, React, and Canvas.",
   "type": "module",
   "scripts": {
-    "dev": "astro dev",
+    "dev": "set NODE_ENV=development&& astro dev --force",
     "build": "astro check && astro build",
     "preview": "astro preview",
     "test": "vitest run",

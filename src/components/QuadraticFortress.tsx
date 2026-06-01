@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { Component } from "react";
 import type { ReactNode } from "react";
 import rough from "roughjs";
 import {
@@ -18,18 +19,23 @@ import {
 } from "lucide-react";
 import {
   applyLastShot,
+  continuePracticeAfterSuccess,
   createInitialGameState,
+  createPracticeGameState,
   createPreviewShot,
   canMoveActivePlayer,
   getActivePlayer,
+  getPracticeStage,
   getRemainingMove,
   getShotProjectile,
   moveActivePlayer,
+  PRACTICE_STAGES,
   prepareShot,
   type MoveDirection,
   type GameState,
   type GameMode,
   type PlayerId,
+  type PracticeStageConfig,
   type ShotInput,
   type ShotResult,
 } from "../lib/game";
@@ -80,15 +86,105 @@ type ScreenPoint = {
 
 type CoordinateDisplayMode = "teacher" | "student";
 type ScreenMode = "menu" | "map" | "game";
+type PracticeDialogMode = "intro" | "success" | "complete" | null;
 type DisplayHpByPlayer = Record<PlayerId, number>;
 type AimInputByPlayer = Record<PlayerId, ShotInput>;
 type Players = GameState["players"];
+type ErrorBoundaryState = {
+  errorMessage: string | null;
+};
 
 function getPlayerLabel(playerId: PlayerId): string {
   return playerId === "p1" ? "1P" : "2P";
 }
 
+function readTutorialCompleted(): boolean {
+  try {
+    return typeof window !== "undefined" && window.localStorage.getItem(STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function rememberTutorialCompleted() {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, "true");
+  } catch {
+    // The game should keep running even if browser storage is blocked.
+  }
+}
+
+class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { errorMessage: null };
+
+  static getDerivedStateFromError(error: unknown): ErrorBoundaryState {
+    return { errorMessage: getErrorMessage(error) };
+  }
+
+  override render() {
+    if (this.state.errorMessage) {
+      return <AppErrorFallback message={this.state.errorMessage} />;
+    }
+
+    return this.props.children;
+  }
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function AppErrorFallback({ message }: { message: string }) {
+  return (
+    <main className="game-shell mode-menu-screen">
+      <section className="app-error-panel" role="alert">
+        <p className="eyebrow">App Error</p>
+        <h1>화면을 불러오지 못했습니다</h1>
+        <p>{message}</p>
+        <button className="primary-button" type="button" onClick={() => window.location.reload()}>
+          새로고침
+        </button>
+      </section>
+    </main>
+  );
+}
+
 export default function QuadraticFortress() {
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleError = (event: ErrorEvent) => {
+      setRuntimeError(getErrorMessage(event.error ?? event.message));
+    };
+    const handleRejection = (event: PromiseRejectionEvent) => {
+      setRuntimeError(getErrorMessage(event.reason));
+    };
+
+    window.addEventListener("error", handleError);
+    window.addEventListener("unhandledrejection", handleRejection);
+
+    return () => {
+      window.removeEventListener("error", handleError);
+      window.removeEventListener("unhandledrejection", handleRejection);
+    };
+  }, []);
+
+  if (runtimeError) {
+    return <AppErrorFallback message={runtimeError} />;
+  }
+
+  return (
+    <AppErrorBoundary>
+      <QuadraticFortressApp />
+    </AppErrorBoundary>
+  );
+}
+
+function QuadraticFortressApp() {
   const [game, setGame] = useState<GameState>(() => createInitialGameState());
   const [aimInputByPlayer, setAimInputByPlayer] = useState<AimInputByPlayer>(() =>
     createInitialAimInputByPlayer(game.players),
@@ -104,6 +200,7 @@ export default function QuadraticFortress() {
   const [isFalling, setIsFalling] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
   const [visualPlayers, setVisualPlayers] = useState<Players | null>(null);
+  const [practiceDialog, setPracticeDialog] = useState<PracticeDialogMode>(null);
   const [coordinateDisplayMode, setCoordinateDisplayMode] =
     useState<CoordinateDisplayMode>("teacher");
   const [displayHpByPlayer, setDisplayHpByPlayer] = useState<DisplayHpByPlayer>(() =>
@@ -117,6 +214,7 @@ export default function QuadraticFortress() {
   const hpFrameRef = useRef<number | null>(null);
   const gameRef = useRef<GameState>(game);
   const displayHpRef = useRef<DisplayHpByPlayer>(displayHpByPlayer);
+  const practiceDialogKeyRef = useRef<string>("none");
 
   const renderGame = useMemo(
     () => (visualPlayers ? { ...game, players: visualPlayers } : game),
@@ -125,26 +223,41 @@ export default function QuadraticFortress() {
   const activeInput = aimInputByPlayer[game.activePlayerId];
   const previewShot = useMemo(() => createPreviewShot(game, activeInput), [game, activeInput]);
   const visibleShot = game.lastShot ?? previewShot;
-  const isInteractionLocked = isShotAnimating || isFalling || isMoving;
+  const isInteractionLocked = isShotAnimating || isFalling || isMoving || Boolean(practiceDialog);
+  const practiceStage = game.practice ? getPracticeStage(game.practice.step) : null;
 
   const chooseMode = (mode: GameMode) => {
+    if (mode === "practice") {
+      startPracticeMode();
+      return;
+    }
+
     setSelectedMode(mode);
     setScreenMode("map");
   };
 
+  const startPracticeMode = () => {
+    cancelAllAnimations();
+    const nextGame = createPracticeGameState(1);
+    setGame(nextGame);
+    setAimInputByPlayer(createPracticeAimInputByPlayer(nextGame));
+    setAnimationProgress(1);
+    setIsResultOpen(false);
+    setIsHistoryOpen(false);
+    setIsTrajectoryPreviewOn(false);
+    setIsShotAnimating(false);
+    setIsFalling(false);
+    setIsMoving(false);
+    setVisualPlayers(null);
+    displayHpRef.current = createDisplayHpByPlayer(nextGame.players);
+    setDisplayHpByPlayer(createDisplayHpByPlayer(nextGame.players));
+    practiceDialogKeyRef.current = "none";
+    setPracticeDialog("intro");
+    setScreenMode("game");
+  };
+
   const startGame = (mode: GameMode, mapId: TerrainMapId) => {
-    if (frameRef.current) {
-      cancelAnimationFrame(frameRef.current);
-    }
-    if (fallFrameRef.current) {
-      cancelAnimationFrame(fallFrameRef.current);
-    }
-    if (moveFrameRef.current) {
-      cancelAnimationFrame(moveFrameRef.current);
-    }
-    if (hpFrameRef.current) {
-      cancelAnimationFrame(hpFrameRef.current);
-    }
+    cancelAllAnimations();
 
     const nextGame = createInitialGameState(mode, mapId);
     setGame(nextGame);
@@ -157,9 +270,25 @@ export default function QuadraticFortress() {
     setIsFalling(false);
     setIsMoving(false);
     setVisualPlayers(null);
+    setPracticeDialog(null);
     displayHpRef.current = createDisplayHpByPlayer(nextGame.players);
     setDisplayHpByPlayer(createDisplayHpByPlayer(nextGame.players));
     setScreenMode("game");
+  };
+
+  const cancelAllAnimations = () => {
+    if (frameRef.current) {
+      cancelAnimationFrame(frameRef.current);
+    }
+    if (fallFrameRef.current) {
+      cancelAnimationFrame(fallFrameRef.current);
+    }
+    if (moveFrameRef.current) {
+      cancelAnimationFrame(moveFrameRef.current);
+    }
+    if (hpFrameRef.current) {
+      cancelAnimationFrame(hpFrameRef.current);
+    }
   };
 
   useEffect(() => {
@@ -167,9 +296,38 @@ export default function QuadraticFortress() {
   }, [game]);
 
   useEffect(() => {
-    const completed =
-      typeof window !== "undefined" && window.localStorage.getItem(STORAGE_KEY) === "true";
-    setTutorial(createInitialTutorialState(completed));
+    if (game.mode !== "practice" || !game.practice) {
+      practiceDialogKeyRef.current = "none";
+      setPracticeDialog(null);
+      return;
+    }
+
+    const dialogMode = game.practice.isComplete
+      ? "complete"
+      : game.practice.pendingNextStep
+        ? "success"
+        : "intro";
+    const key = `${game.practice.step}-${dialogMode}-${game.practice.pendingNextStep ?? "none"}`;
+
+    if (practiceDialogKeyRef.current === key) {
+      return;
+    }
+
+    practiceDialogKeyRef.current = key;
+    setPracticeDialog(dialogMode);
+
+    if (dialogMode === "intro") {
+      setAimInputByPlayer(createPracticeAimInputByPlayer(game));
+    }
+  }, [game.mode, game.practice?.step, game.practice?.isComplete, game.practice?.pendingNextStep]);
+
+  useEffect(() => {
+    const completed = readTutorialCompleted();
+    setTutorial((current) => ({
+      ...current,
+      hasCompleted: completed,
+      isOpen: false,
+    }));
   }, []);
 
   useEffect(() => {
@@ -502,18 +660,7 @@ export default function QuadraticFortress() {
   };
 
   const reset = () => {
-    if (frameRef.current) {
-      cancelAnimationFrame(frameRef.current);
-    }
-    if (hpFrameRef.current) {
-      cancelAnimationFrame(hpFrameRef.current);
-    }
-    if (fallFrameRef.current) {
-      cancelAnimationFrame(fallFrameRef.current);
-    }
-    if (moveFrameRef.current) {
-      cancelAnimationFrame(moveFrameRef.current);
-    }
+    cancelAllAnimations();
 
     const nextGame = createInitialGameState(game.mode, game.mapId);
     setGame(nextGame);
@@ -526,6 +673,8 @@ export default function QuadraticFortress() {
     setIsFalling(false);
     setIsMoving(false);
     setVisualPlayers(null);
+    setPracticeDialog(null);
+    practiceDialogKeyRef.current = "none";
     displayHpRef.current = createDisplayHpByPlayer(nextGame.players);
     setDisplayHpByPlayer(createDisplayHpByPlayer(nextGame.players));
     setScreenMode("menu");
@@ -550,7 +699,7 @@ export default function QuadraticFortress() {
   const closeTutorialAndRemember = () => {
     setTutorial((current) => {
       const next = closeTutorial(current);
-      window.localStorage.setItem(STORAGE_KEY, "true");
+      rememberTutorialCompleted();
       return next;
     });
   };
@@ -559,7 +708,7 @@ export default function QuadraticFortress() {
     setTutorial((current) => {
       const next = nextTutorialStep(current);
       if (!next.isOpen) {
-        window.localStorage.setItem(STORAGE_KEY, "true");
+        rememberTutorialCompleted();
       }
       return next;
     });
@@ -617,6 +766,10 @@ export default function QuadraticFortress() {
             <button className="mode-choice-button" type="button" onClick={() => chooseMode("normal")}>
               <strong>일반 모드 시작</strong>
               <span>바닥은 안전하고 공중 지형만 파괴됩니다.</span>
+            </button>
+            <button className="mode-choice-button is-practice" type="button" onClick={() => chooseMode("practice")}>
+              <strong>연습 모드 시작</strong>
+              <span>1P만 조작하며 3단계 미션을 차례로 해결합니다.</span>
             </button>
             <button
               className="mode-choice-button is-danger"
@@ -682,12 +835,16 @@ export default function QuadraticFortress() {
           mode={game.mode}
           onReset={reset}
           onTutorial={() => setTutorial((current) => openTutorial(current))}
+          practice={game.practice}
           players={game.players}
           winnerId={game.winnerId}
         />
 
         <section className="board-panel arena-board" aria-label="좌표평면 게임판">
           <canvas ref={canvasRef} aria-label="포물선 전장" role="img" />
+          {practiceStage && !game.practice?.isComplete ? (
+            <PracticeProblemCard stage={practiceStage} />
+          ) : null}
         </section>
 
         <AimControls
@@ -718,6 +875,16 @@ export default function QuadraticFortress() {
       {game.winnerId ? (
         <VictoryModal game={game} winnerId={game.winnerId} onReset={reset} />
       ) : null}
+
+      {practiceDialog && practiceStage ? (
+        <PracticeModal
+          mode={practiceDialog}
+          onContinue={() => setGame((current) => continuePracticeAfterSuccess(current))}
+          stage={practiceStage}
+          onClose={() => setPracticeDialog(null)}
+          onReturnToMenu={reset}
+        />
+      ) : null}
     </main>
   );
 }
@@ -729,6 +896,7 @@ function GameHud({
   mode,
   onReset,
   onTutorial,
+  practice,
   players,
   winnerId,
 }: {
@@ -738,38 +906,59 @@ function GameHud({
   mode: GameMode;
   onReset: () => void;
   onTutorial: () => void;
+  practice: GameState["practice"];
   players: GameState["players"];
   winnerId: PlayerId | null;
 }) {
+  const modeLabel =
+    mode === "practice" && practice
+      ? `연습 모드 · ${practice.step}단계`
+      : `${getGameModeLabel(mode)} · ${getTerrainMapLabel(mapId)}`;
+
   return (
     <header className="game-hud" aria-label="게임 상태">
       <div className="game-brand">
         <p className="eyebrow">Quadratic Fortress</p>
         <h1>2차함수 포트리스</h1>
-        <p className={`mode-label mode-${mode}`}>{getGameModeLabel(mode)} · {getTerrainMapLabel(mapId)}</p>
+        <p className={`mode-label mode-${mode}`}>{modeLabel}</p>
       </div>
       <div className="versus-hud">
-        {players.map((player) => (
-          <div
-            className={`hud-player ${player.id === activePlayerId ? "is-active" : ""}`}
-            key={player.id}
-          >
-            <div className="hud-player-row">
-              <strong>{player.name}</strong>
-              <span>{Math.round(displayHpByPlayer[player.id])} HP</span>
-            </div>
+        {players.map((player) => {
+          const maxHp =
+            mode === "practice" && player.id === "p2" && practice
+              ? getPracticeStage(practice.step).targetHp
+              : STARTING_HP;
+
+          return (
             <div
-              className="hp-track"
-              aria-label={`${player.name} 체력 ${Math.round(displayHpByPlayer[player.id])}`}
+              className={`hud-player ${player.id === activePlayerId ? "is-active" : ""}`}
+              key={player.id}
             >
-              <span style={{ width: `${(displayHpByPlayer[player.id] / STARTING_HP) * 100}%` }} />
+              <div className="hud-player-row">
+                <strong>{player.name}</strong>
+                <span>{Math.round(displayHpByPlayer[player.id])} HP</span>
+              </div>
+              <div
+                className="hp-track"
+                aria-label={`${player.name} 체력 ${Math.round(displayHpByPlayer[player.id])}`}
+              >
+                <span
+                  style={{
+                    width: `${(displayHpByPlayer[player.id] / Math.max(1, maxHp)) * 100}%`,
+                  }}
+                />
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       {winnerId ? (
         <div className="turn-badge" aria-live="polite">
           {`${getPlayerLabel(winnerId)} 승리`}
+        </div>
+      ) : mode === "practice" ? (
+        <div className="turn-badge practice-turn" aria-live="polite">
+          1P 연습 중
         </div>
       ) : null}
       <div className="topbar-actions">
@@ -797,6 +986,10 @@ function GameHud({
 }
 
 function getGameModeLabel(mode: GameMode): string {
+  if (mode === "practice") {
+    return "연습 모드";
+  }
+
   return mode === "normal" ? "일반 모드" : "바다 모드";
 }
 
@@ -832,6 +1025,7 @@ function AimControls({
   const activePlayer = getActivePlayer(game);
   const canShowResult = Boolean(game.lastShot);
   const remainingMove = getRemainingMove(game);
+  const canFire = previewShot.validationErrors.length === 0;
 
   return (
     <section className="aim-console" aria-label="조준 콘솔">
@@ -888,7 +1082,7 @@ function AimControls({
         <button
           className="fire-button"
           type="submit"
-          disabled={Boolean(game.winnerId) || isShotAnimating}
+          disabled={Boolean(game.winnerId) || isShotAnimating || !canFire}
         >
           <Play size={20} />
           발사
@@ -1000,6 +1194,79 @@ function createInitialAimInputByPlayer(players?: GameState["players"]): AimInput
     p1: getInput("p1"),
     p2: getInput("p2"),
   };
+}
+
+function createPracticeAimInputByPlayer(game: GameState): AimInputByPlayer {
+  const stage = game.practice ? getPracticeStage(game.practice.step) : PRACTICE_STAGES[0];
+
+  return {
+    p1: { ...stage.defaultInput },
+    p2: { ...stage.defaultInput },
+  };
+}
+
+function PracticeProblemCard({ stage }: { stage: PracticeStageConfig }) {
+  return (
+    <aside className="practice-problem" aria-label="연습 문제">
+      <p className="eyebrow">Practice Mission {stage.step}</p>
+      <strong>{stage.title}</strong>
+      <p>{stage.problem}</p>
+    </aside>
+  );
+}
+
+function PracticeModal({
+  mode,
+  onContinue,
+  onClose,
+  onReturnToMenu,
+  stage,
+}: {
+  mode: Exclude<PracticeDialogMode, null>;
+  onContinue: () => void;
+  onClose: () => void;
+  onReturnToMenu: () => void;
+  stage: PracticeStageConfig;
+}) {
+  const isComplete = mode === "complete";
+  const isSuccess = mode === "success";
+  const successMessage = `${stage.step}단계를 성공했습니다. 다음 단계로 넘어갑니다.`;
+
+  return (
+    <div className="modal-backdrop practice-modal-backdrop" role="presentation">
+      <section
+        aria-label={isComplete ? "연습 모드 종료" : `연습 모드 ${stage.step}단계`}
+        aria-modal="true"
+        className="practice-modal"
+        role="dialog"
+      >
+        <p className="eyebrow">
+          {isComplete ? "Practice Complete" : isSuccess ? "Practice Success" : `Practice ${stage.step} / 3`}
+        </p>
+        <h2>{isComplete ? "연습 모드가 종료되었습니다." : isSuccess ? "성공!" : stage.title}</h2>
+        {isComplete ? (
+          <p>모든 연습 단계를 완료했습니다.</p>
+        ) : isSuccess ? (
+          <p>{successMessage}</p>
+        ) : (
+          <>
+            <p>{stage.message}</p>
+            <div className="practice-modal-problem">
+              <strong>문제</strong>
+              <span>{stage.problem}</span>
+            </div>
+          </>
+        )}
+        <button
+          className="primary-button"
+          type="button"
+          onClick={isComplete ? onReturnToMenu : isSuccess ? onContinue : onClose}
+        >
+          {isComplete ? "메인 메뉴로 돌아가기" : "OK"}
+        </button>
+      </section>
+    </div>
+  );
 }
 
 function getFallingPlayers(startPlayers: Players, endPlayers: Players): PlayerId[] {
@@ -1393,9 +1660,9 @@ function TutorialScreen({
 
 const TUTORIAL_DETAILS = [
   {
-    title: "1. 입력값은 최고점",
+    title: "1. 입력값은 그래프의 꼭짓점",
     formula: "입력: 꼭짓점 (h, k) = (0, 6)",
-    lines: ["포탄은 이 점을 가장 높게 지나갑니다.", "그래프에서 max 표시가 포물선의 꼭대기입니다."],
+    lines: ["포탄은 이 점을 가장 높게 지나갑니다.", "그래프에서 max 표시가 포물선의 꼭짓점입니다."],
   },
   {
     title: "2. 탱크 좌표로 a값 계산",
@@ -1403,9 +1670,9 @@ const TUTORIAL_DETAILS = [
     lines: ["현재 탱크 (-8, 0)을 식에 대입합니다.", "그래서 y = -0.094(x - 0)² + 6이 됩니다."],
   },
   {
-    title: "3. 지면에 닿는 곳이 착탄점",
+    title: "3. 지형 또는 대상과 다시 만나는 곳이 착탄점",
     formula: "x착탄 = 2h - xs = 2×0 - (-8) = 8",
-    lines: ["포물선이 y=0에 다시 닿으면 폭발합니다.", "이 예시는 상대 탱크 중심 (8, 0)에 정확히 떨어집니다."],
+    lines: ["착탄점이 상대 탱크에 가까울수록 피해가 커집니다.", "이 예시는 상대 탱크 중심 (8, 0)에 정확히 떨어집니다."],
   },
   {
     title: "4. 원 안의 거리로 피해 계산",
@@ -1634,7 +1901,7 @@ function TutorialSketch({
           </circle>
         </svg>
         <strong>
-          포탄이 탱크에서 출발해 꼭짓점을 지나고, y=0에 다시 닿는 지점에서 폭발합니다.
+          포탄이 탱크에서 출발해 꼭짓점을 지나고, 지형 또는 대상에 다시 닿는 지점에서 폭발합니다.
         </strong>
       </div>
 
@@ -1729,6 +1996,11 @@ function drawBoard(
   }
 
   for (const player of game.players) {
+    const tankMaxHp =
+      game.mode === "practice" && player.id === "p2" && game.practice
+        ? getPracticeStage(game.practice.step).targetHp
+        : STARTING_HP;
+
     drawTank(
       ctx,
       rc,
@@ -1736,10 +2008,11 @@ function drawBoard(
       player,
       player.id === game.activePlayerId,
       displayHpByPlayer[player.id],
+      tankMaxHp,
     );
   }
 
-  drawVertex(ctx, rc, toScreen, previewShot.vertex, getActivePlayer(game).id);
+  drawVertex(ctx, rc, toScreen, previewShot.vertex, getActivePlayer(game).id, game.mode);
   if (hasFiredShot) {
     drawShell(rc, toScreen, visibleShot, shotShooterPosition, animationProgress);
   }
@@ -2431,6 +2704,7 @@ function drawTank(
   player: GameState["players"][number],
   isActive: boolean,
   displayHp: number,
+  maxHp = STARTING_HP,
 ) {
   const position = player.tankPosition;
   const id = player.id;
@@ -2469,18 +2743,23 @@ function drawTank(
   ctx.textBaseline = "middle";
   ctx.fillText(player.name, screen.x, screen.y - 30);
   ctx.restore();
-  drawTankHpBar(ctx, screen, displayHp);
+  drawTankHpBar(ctx, screen, displayHp, maxHp);
   if (isActive) {
     drawTankTurnPointer(ctx, screen);
   }
 }
 
-function drawTankHpBar(ctx: CanvasRenderingContext2D, screen: ScreenPoint, displayHp: number) {
+function drawTankHpBar(
+  ctx: CanvasRenderingContext2D,
+  screen: ScreenPoint,
+  displayHp: number,
+  maxHp = STARTING_HP,
+) {
   const width = 48;
   const height = 7;
   const x = screen.x - width / 2;
   const y = screen.y - 62;
-  const hpRatio = Math.max(0, Math.min(1, displayHp / STARTING_HP));
+  const hpRatio = Math.max(0, Math.min(1, displayHp / Math.max(1, maxHp)));
 
   ctx.save();
   ctx.fillStyle = "#fee2e2";
@@ -2512,6 +2791,7 @@ function drawVertex(
   toScreen: (point: Point) => ScreenPoint,
   vertex: Point,
   activePlayerId: PlayerId,
+  mode: GameMode,
 ) {
   if (!Number.isFinite(vertex.x) || !Number.isFinite(vertex.y)) {
     return;
@@ -2524,7 +2804,7 @@ function drawVertex(
     fillStyle: "solid",
     strokeWidth: 2,
   });
-  const label = activePlayerId === "p1" ? "1P TURN" : "2P TURN";
+  const label = mode === "practice" ? "1P 연습 중" : activePlayerId === "p1" ? "1P TURN" : "2P TURN";
   ctx.save();
   ctx.fillStyle = activePlayerId === "p1" ? "#dc2626" : "#2563eb";
   ctx.strokeStyle = "#ffffff";

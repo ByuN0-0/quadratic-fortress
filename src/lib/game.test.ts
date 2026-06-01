@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  BACKWARD_AIM_MESSAGE,
   MAX_TURN_MOVE,
+  MAX_TANK_STEP_UP_HEIGHT,
   MOVE_STEP,
   applyLastShot,
   canMoveActivePlayer,
+  continuePracticeAfterSuccess,
   createInitialGameState,
+  createPracticeGameState,
+  createPreviewShot,
+  getPracticeStage,
   getRemainingMove,
   moveActivePlayer,
   prepareShot,
@@ -33,6 +39,26 @@ describe("game reducer", () => {
   it("stores the selected game mode", () => {
     expect(createInitialGameState().mode).toBe("normal");
     expect(createInitialGameState("ocean").mode).toBe("ocean");
+    expect(createInitialGameState("practice").mode).toBe("practice");
+  });
+
+  it("creates the first practice mission with a target and wall", () => {
+    const state = createPracticeGameState();
+
+    expect(state.practice).toEqual({ step: 1, isComplete: false, pendingNextStep: null });
+    expect(getPracticeStage(1).defaultInput).toEqual({
+      vertexX: 0,
+      vertexY: 5,
+      projectileType: "normal",
+    });
+    expect(state.activePlayerId).toBe("p1");
+    expect(state.players[0].tankPosition).toEqual({ x: -8, y: 0 });
+    expect(state.players[1].name).toBe("목표물");
+    expect(state.players[1].tankPosition).toEqual({ x: 8, y: 0 });
+    expect(state.players[1].hp).toBe(1);
+    expect(state.terrain.blocks).toEqual([
+      { id: "practice-1-wall", x: -1, y: 0, width: 2, height: 6 },
+    ]);
   });
 
   it("stores the selected terrain map", () => {
@@ -145,6 +171,100 @@ describe("game reducer", () => {
     expect(applied.movementUsed).toBe(0);
     expect(applied.shotHistory).toHaveLength(1);
     expect(applied.lastShot?.isApplied).toBe(true);
+  });
+
+  it("blocks 1P from aiming the vertex behind the tank", () => {
+    const state = createFlatShotState();
+    const preview = createPreviewShot(state, { vertexX: -9, vertexY: 6 });
+    const prepared = prepareShot(state, { vertexX: -9, vertexY: 6 });
+    const submitted = submitShot(state, { vertexX: -9, vertexY: 6 });
+
+    expect(preview.validationErrors[0]).toBe(BACKWARD_AIM_MESSAGE);
+    expect(prepared.lastShot?.validationErrors[0]).toBe(BACKWARD_AIM_MESSAGE);
+    expect(submitted.shotHistory).toHaveLength(0);
+    expect(submitted.activePlayerId).toBe("p1");
+  });
+
+  it("blocks 2P from aiming the vertex behind the tank", () => {
+    const state = {
+      ...createFlatShotState(),
+      activePlayerId: "p2" as const,
+      players: [
+        { ...createFlatShotState().players[0], isActive: false },
+        { ...createFlatShotState().players[1], isActive: true },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+    };
+    const next = submitShot(state, { vertexX: 9, vertexY: 6 });
+
+    expect(next.lastShot?.validationErrors[0]).toBe(BACKWARD_AIM_MESSAGE);
+    expect(next.shotHistory).toHaveLength(0);
+    expect(next.activePlayerId).toBe("p2");
+  });
+
+  it("uses the same forward-aim rule in practice mode", () => {
+    const state = createPracticeGameState(1);
+    const next = submitShot(state, { vertexX: -9, vertexY: 6 });
+
+    expect(next.lastShot?.validationErrors[0]).toBe(BACKWARD_AIM_MESSAGE);
+    expect(next.shotHistory).toHaveLength(0);
+    expect(next.activePlayerId).toBe("p1");
+    expect(next.practice).toEqual({ step: 1, isComplete: false, pendingNextStep: null });
+  });
+
+  it("keeps practice mode on 1P turn when the target survives", () => {
+    const state = {
+      ...createPracticeGameState(3),
+      terrain: {
+        blocks: [] as ReturnType<typeof createInitialGameState>["terrain"]["blocks"],
+        segments: [] as ReturnType<typeof createInitialGameState>["terrain"]["segments"],
+        holes: [],
+      },
+    };
+    const next = submitShot(state, { vertexX: 0, vertexY: 6, projectileType: "wide" });
+
+    expect(next.mode).toBe("practice");
+    expect(next.practice).toEqual({ step: 3, isComplete: false, pendingNextStep: null });
+    expect(next.activePlayerId).toBe("p1");
+    expect(next.players[1].hp).toBe(23);
+  });
+
+  it("waits for confirmation before advancing to the next practice mission", () => {
+    const next = submitShot(createPracticeGameState(1), {
+      vertexX: 0,
+      vertexY: 7,
+      projectileType: "normal",
+    });
+
+    expect(next.mode).toBe("practice");
+    expect(next.practice).toEqual({ step: 1, isComplete: false, pendingNextStep: 2 });
+    expect(next.activePlayerId).toBe("p1");
+    expect(next.players[0].tankPosition).toEqual({ x: -8, y: 0 });
+    expect(next.players[1].tankPosition).toEqual({ x: 8, y: 0 });
+    expect(next.players[1].hp).toBe(0);
+    expect(next.shotHistory).toHaveLength(1);
+
+    const advanced = continuePracticeAfterSuccess(next);
+    expect(advanced.practice).toEqual({ step: 2, isComplete: false, pendingNextStep: null });
+    expect(advanced.players[1].tankPosition).toEqual({ x: 6, y: 0 });
+    expect(advanced.shotHistory).toHaveLength(1);
+  });
+
+  it("completes practice mode after defeating the stage three target", () => {
+    const state = {
+      ...createPracticeGameState(3),
+      terrain: {
+        blocks: [] as ReturnType<typeof createInitialGameState>["terrain"]["blocks"],
+        segments: [] as ReturnType<typeof createInitialGameState>["terrain"]["segments"],
+        holes: [],
+      },
+    };
+    const next = submitShot(state, { vertexX: 0, vertexY: 6, projectileType: "power" });
+
+    expect(next.mode).toBe("practice");
+    expect(next.practice).toEqual({ step: 3, isComplete: true, pendingNextStep: null });
+    expect(next.activePlayerId).toBe("p1");
+    expect(next.winnerId).toBeNull();
+    expect(next.players[1].hp).toBe(0);
   });
 
   it("does not apply invalid prepared shots", () => {
@@ -318,6 +438,107 @@ describe("game reducer", () => {
     expect(canMoveActivePlayer(state, 1)).toBe(true);
     expect(moved.players[0].tankPosition).toEqual({ x: 0.2, y: 0.5 });
     expect(moved.movementUsed).toBe(0.1);
+  });
+
+  it("allows dropping onto a lower check tile beyond a ledge", () => {
+    const state = {
+      ...createInitialGameState("ocean", "map4"),
+      players: [
+        {
+          ...createInitialGameState("ocean", "map4").players[0],
+          tankPosition: { x: -7.05, y: 9 },
+        },
+        createInitialGameState("ocean", "map4").players[1],
+      ] as ReturnType<typeof createInitialGameState>["players"],
+    };
+
+    const moved = moveActivePlayer(state, 1);
+
+    expect(canMoveActivePlayer(state, 1)).toBe(true);
+    expect(moved.players[0].tankPosition).toEqual({ x: -6.9, y: 8 });
+  });
+
+  it("allows moving off a cliff when there is no side wall in the move path", () => {
+    const state = {
+      ...createInitialGameState("normal"),
+      players: [
+        {
+          ...createInitialGameState().players[0],
+          tankPosition: { x: 0.05, y: 4 },
+        },
+        {
+          ...createInitialGameState().players[1],
+          tankPosition: { x: 8, y: 0 },
+        },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+      terrain: {
+        blocks: [
+          { id: "ledge", x: -1, y: 3.5, width: 1.1, height: 0.5 },
+          { id: "floor", x: 1, y: 0, width: 2, height: 0.5 },
+        ] as ReturnType<typeof createInitialGameState>["terrain"]["blocks"],
+        segments: [],
+        holes: [],
+      },
+    };
+
+    const moved = moveActivePlayer(state, 1);
+
+    expect(canMoveActivePlayer(state, 1)).toBe(true);
+    expect(moved.players[0].tankPosition).toEqual({ x: 0.2, y: 0 });
+  });
+
+  it("blocks stepping up more than the maximum tank climb height", () => {
+    const state = {
+      ...createInitialGameState(),
+      players: [
+        {
+          ...createInitialGameState().players[0],
+          tankPosition: { x: -0.05, y: 1 },
+        },
+        {
+          ...createInitialGameState().players[1],
+          tankPosition: { x: 8, y: 0 },
+        },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+      terrain: {
+        blocks: [
+          { id: "low", x: -1, y: 0, width: 1, height: 1 },
+          { id: "too-high", x: 0, y: MAX_TANK_STEP_UP_HEIGHT + 0.1, width: 1, height: 1 },
+        ] as ReturnType<typeof createInitialGameState>["terrain"]["blocks"],
+        segments: [],
+        holes: [],
+      },
+    };
+
+    expect(canMoveActivePlayer(state, 1)).toBe(false);
+    expect(moveActivePlayer(state, 1)).toBe(state);
+  });
+
+  it("blocks side walls that overlap the tank body at the current height", () => {
+    const state = {
+      ...createInitialGameState(),
+      players: [
+        {
+          ...createInitialGameState().players[0],
+          tankPosition: { x: -0.05, y: 8 },
+        },
+        {
+          ...createInitialGameState().players[1],
+          tankPosition: { x: 8, y: 0 },
+        },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+      terrain: {
+        blocks: [
+          { id: "ledge", x: -1, y: 7, width: 1, height: 1 },
+          { id: "body-wall", x: 0, y: 8.2, width: 1, height: 1 },
+        ] as ReturnType<typeof createInitialGameState>["terrain"]["blocks"],
+        segments: [],
+        holes: [],
+      },
+    };
+
+    expect(canMoveActivePlayer(state, 1)).toBe(false);
+    expect(moveActivePlayer(state, 1)).toBe(state);
   });
 
   it("declares a winner when moving off a cliff into the sea", () => {
