@@ -124,6 +124,26 @@ describe("terrain", () => {
     expect(hit?.point.x).toBeGreaterThan(6);
   });
 
+  it("uses a nearby terrain hit when the armed path would otherwise tunnel through a crater", () => {
+    const terrain = {
+      blocks: [{ id: "base", x: -10, y: 0, width: 20, height: 2 }],
+      segments: [],
+      holes: [{ id: "blast", x: -2, y: 0, radius: 1.5 }],
+    };
+    const quadratic = { a: 0, h: 0, k: 1.6 };
+
+    const hit = findProjectileTerrainImpact(
+      { x: -2, y: 2 },
+      quadratic,
+      { x: -1, y: 1.6 },
+      terrain,
+      0.7,
+    );
+
+    expect(hit?.blockId).toBe("base");
+    expect(hit?.point.y).toBeGreaterThan(1.4);
+  });
+
   it("creates a circular hole using the blast radius", () => {
     const terrain = {
       blocks: [{ id: "platform", x: -1, y: 2, width: 4, height: 0.5 }],

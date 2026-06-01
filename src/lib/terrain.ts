@@ -41,9 +41,15 @@ export type TerrainHole = {
   radius: number;
 };
 
+type TerrainSupport = {
+  y: number;
+  slope: number;
+};
+
 export const AIR_TERRAIN_HEIGHT = 0.5;
 export const SUPPORT_TOLERANCE = 0.08;
 export const OCEAN_FALL_Y = -1;
+const MIN_EARLY_TERRAIN_IMPACT_DISTANCE = 0.25;
 export const TERRAIN_MAP_IDS: TerrainMapId[] = [
   "map1",
   "map2",
@@ -367,16 +373,13 @@ export function findProjectileTerrainImpact(
   const { blocks, segments, holes } = normalizedTerrain;
   const distanceX = groundImpact.x - shooter.x;
   const steps = Math.max(1, Math.ceil(Math.abs(distanceX) / 0.02));
+  let earlyTerrainImpact: { point: Point; blockId: string } | null = null;
 
   for (let index = 1; index <= steps; index += 1) {
     const t = index / steps;
     const x = shooter.x + distanceX * t;
     const y = getYAtX(quadratic, x);
     const traveled = Math.hypot(x - shooter.x, y - shooter.y);
-
-    if (traveled < minTravelDistance) {
-      continue;
-    }
 
     const point = { x, y };
     const hitBlock = blocks.find(
@@ -385,6 +388,18 @@ export function findProjectileTerrainImpact(
     const hitSegment = segments.find(
       (segment) => isPointInsideSegmentBody(point, segment) && !isPointInsideAnyHole(point, holes),
     );
+    const hitTerrainId = hitBlock?.id ?? hitSegment?.id ?? null;
+
+    if (traveled < minTravelDistance) {
+      if (!earlyTerrainImpact && hitTerrainId && traveled >= MIN_EARLY_TERRAIN_IMPACT_DISTANCE) {
+        earlyTerrainImpact = {
+          point: { x: roundToStep(x), y: round(y, 2) },
+          blockId: hitTerrainId,
+        };
+      }
+
+      continue;
+    }
 
     if (hitBlock) {
       return {
@@ -401,7 +416,7 @@ export function findProjectileTerrainImpact(
     }
   }
 
-  return null;
+  return earlyTerrainImpact;
 }
 
 export function destroyTerrainBlocks(
@@ -525,10 +540,7 @@ export function findSupportAtX(
     .map((segment) => ({ y: getSegmentYAtX(segment, x), slope: getSegmentSlope(segment) }))
     .filter((support) => !isPointInsideAnyHole({ x, y: support.y }, normalizedTerrain.holes))
     .filter((support) => support.y <= fromY + SUPPORT_TOLERANCE);
-  const holeBoundarySupports = findHoleBoundarySupports(x, fromY, normalizedTerrain).map((y) => ({
-    y,
-    slope: 0,
-  }));
+  const holeBoundarySupports = findHoleBoundarySupportCandidates(x, fromY, normalizedTerrain);
   const upperSupports = [...nonFoundationBlockSupports, ...segmentSupports, ...holeBoundarySupports];
   const supports = upperSupports.length > 0 ? upperSupports : foundationBlockSupports;
 
@@ -571,6 +583,14 @@ function findHoleBoundarySupports(
   fromY: number,
   terrain: TerrainState,
 ): number[] {
+  return findHoleBoundarySupportCandidates(x, fromY, terrain).map((support) => support.y);
+}
+
+function findHoleBoundarySupportCandidates(
+  x: number,
+  fromY: number,
+  terrain: TerrainState,
+): TerrainSupport[] {
   return terrain.holes.flatMap((hole) => {
     const dx = x - hole.x;
     if (Math.abs(dx) >= hole.radius) {
@@ -578,10 +598,14 @@ function findHoleBoundarySupports(
     }
 
     const offsetY = Math.sqrt(hole.radius ** 2 - dx ** 2);
-    const candidates = [hole.y + offsetY, hole.y - offsetY]
-      .map((y) => round(y, 2))
-      .filter((y) => y <= fromY + SUPPORT_TOLERANCE)
-      .filter((y) => isSolidTerrainJustBelow({ x, y }, terrain));
+    const upperSlope = offsetY <= FLOAT_EPSILON ? Infinity : -dx / offsetY;
+    const lowerSlope = offsetY <= FLOAT_EPSILON ? Infinity : dx / offsetY;
+    const candidates = [
+      { y: round(hole.y + offsetY, 2), slope: upperSlope },
+      { y: round(hole.y - offsetY, 2), slope: lowerSlope },
+    ]
+      .filter((support) => support.y <= fromY + SUPPORT_TOLERANCE)
+      .filter((support) => isSolidTerrainJustBelow({ x, y: support.y }, terrain));
 
     return candidates;
   });
@@ -679,7 +703,7 @@ function isPointInsideSegmentBody(point: Point, segment: TerrainSegment): boolea
 }
 
 function isPointInsideAnyHole(point: Point, holes: TerrainHole[]): boolean {
-  return holes.some((hole) => Math.hypot(point.x - hole.x, point.y - hole.y) <= hole.radius);
+  return holes.some((hole) => Math.hypot(point.x - hole.x, point.y - hole.y) < hole.radius - FLOAT_EPSILON);
 }
 
 function doesBlastTouchTerrain(terrain: TerrainState, center: Point, radius: number): boolean {

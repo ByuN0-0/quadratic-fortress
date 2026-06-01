@@ -24,11 +24,14 @@ import {
   createPracticeGameState,
   createPreviewShot,
   canMoveActivePlayer,
+  getAimXRange,
   getActivePlayer,
   getPracticeStage,
   getRemainingMove,
+  isMoveBlockedByTerritory,
   getShotProjectile,
   moveActivePlayer,
+  MOVE_TERRITORY_LIMIT_MESSAGE,
   PRACTICE_STAGES,
   prepareShot,
   type MoveDirection,
@@ -1026,6 +1029,15 @@ function AimControls({
   const canShowResult = Boolean(game.lastShot);
   const remainingMove = getRemainingMove(game);
   const canFire = previewShot.validationErrors.length === 0;
+  const aimXRange = getAimXRange(activePlayer.id);
+  const leftMoveAvailable = canMoveActivePlayer(game, -1);
+  const rightMoveAvailable = canMoveActivePlayer(game, 1);
+  const moveLimitMessage =
+    (isMoveBlockedByTerritory(game, -1) || isMoveBlockedByTerritory(game, 1))
+      ? MOVE_TERRITORY_LIMIT_MESSAGE
+      : null;
+  const shotToastResult =
+    game.lastShot ?? (previewShot.validationErrors.length > 0 ? previewShot : null);
 
   return (
     <section className="aim-console" aria-label="조준 콘솔">
@@ -1048,8 +1060,8 @@ function AimControls({
         </div>
         <RangeControl
           label="꼭짓점 x"
-          max={BOARD.xMax}
-          min={BOARD.xMin}
+          max={aimXRange.max}
+          min={aimXRange.min}
           value={input.vertexX}
           onChange={(value) =>
             onInputChange((current) => ({
@@ -1092,6 +1104,7 @@ function AimControls({
         <div className="move-console-copy">
           <p className="eyebrow">MOVE</p>
           <strong>이동 가능: {formatCoordinate(remainingMove)}칸</strong>
+          {moveLimitMessage ? <small>{moveLimitMessage}</small> : null}
         </div>
         <div className="move-buttons">
           <button
@@ -1099,7 +1112,7 @@ function AimControls({
             type="button"
             title="왼쪽으로 이동"
             aria-label="왼쪽으로 이동"
-            disabled={isShotAnimating || !canMoveActivePlayer(game, -1)}
+            disabled={isShotAnimating || !leftMoveAvailable}
             onClick={() => onMove(-1)}
           >
             <ArrowLeft size={20} />
@@ -1109,14 +1122,14 @@ function AimControls({
             type="button"
             title="오른쪽으로 이동"
             aria-label="오른쪽으로 이동"
-            disabled={isShotAnimating || !canMoveActivePlayer(game, 1)}
+            disabled={isShotAnimating || !rightMoveAvailable}
             onClick={() => onMove(1)}
           >
             <ArrowRight size={20} />
           </button>
         </div>
       </div>
-      <ShotToast result={game.lastShot} vertex={previewShot.vertex} />
+      <ShotToast result={shotToastResult} vertex={previewShot.vertex} />
       <div className="quick-actions">
         <div className="mode-toggle" aria-label="좌표 표시 모드">
           <button

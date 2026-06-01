@@ -16,12 +16,14 @@ import {
   type Quadratic,
 } from "./math";
 import {
+  AIR_TERRAIN_HEIGHT,
   createInitialTerrain,
   destroyTerrain,
   findProjectileTerrainImpact,
   findSupportAtX,
   findSupportY,
   OCEAN_FALL_Y,
+  SUPPORT_TOLERANCE,
   settlePlayersOnTerrain,
   type TerrainMapId,
   type TerrainState,
@@ -103,11 +105,16 @@ export const PLAYER_START_HEIGHT = BOARD.yMax;
 export const PROJECTILE_TERRAIN_ARM_DISTANCE = 0.7;
 export const MAX_TANK_TERRAIN_SLOPE = 1;
 export const MAX_TANK_STEP_UP_HEIGHT = 0.4;
+export const PLAYER_TERRITORY_LIMIT_X = 1;
+export const P1_AIM_LIMIT_MESSAGE = "1P는 조준점을 x=1 이하로 설정해야 합니다.";
+export const P2_AIM_LIMIT_MESSAGE = "2P는 조준점을 x=-1 이상으로 설정해야 합니다.";
+export const MOVE_TERRITORY_LIMIT_MESSAGE = "진영 경계입니다.";
 export const BACKWARD_AIM_MESSAGE =
   "뒤쪽으로는 조준할 수 없습니다. 꼭짓점을 상대 방향으로 이동하세요.";
 
 const SIDE_WALL_TOLERANCE = 0.02;
 const TANK_SIDE_BODY_HEIGHT = 0.75;
+const CURRENT_SUPPORT_REACH_HEIGHT = MAX_TANK_STEP_UP_HEIGHT + 0.1;
 
 export const PRACTICE_STAGES: PracticeStageConfig[] = [
   {
@@ -446,6 +453,19 @@ export function getRemainingMove(state: GameState): number {
   return roundToStep(Math.max(0, MAX_TURN_MOVE - state.movementUsed));
 }
 
+export function getAimXRange(playerId: PlayerId): { min: number; max: number } {
+  return playerId === "p1"
+    ? { min: BOARD.xMin, max: PLAYER_TERRITORY_LIMIT_X }
+    : { min: -PLAYER_TERRITORY_LIMIT_X, max: BOARD.xMax };
+}
+
+export function isMoveBlockedByTerritory(state: GameState, direction: MoveDirection): boolean {
+  const activePlayer = getActivePlayer(state);
+  const nextX = roundToStep(activePlayer.tankPosition.x + direction * MOVE_STEP);
+
+  return !isXInsideMoveTerritory(state, activePlayer.id, nextX);
+}
+
 export function canMoveActivePlayer(state: GameState, direction: MoveDirection): boolean {
   if (state.winnerId || getRemainingMove(state) < MOVE_STEP) {
     return false;
@@ -454,7 +474,7 @@ export function canMoveActivePlayer(state: GameState, direction: MoveDirection):
   const activePlayer = getActivePlayer(state);
   const targetPlayer = getTargetPlayer(state);
   const nextX = roundToStep(activePlayer.tankPosition.x + direction * MOVE_STEP);
-  const currentSupport = findReachableTankSupport(
+  const currentSupport = findCurrentTankSupport(
     state,
     activePlayer.tankPosition.x,
     activePlayer.tankPosition.y,
@@ -474,19 +494,14 @@ export function canMoveActivePlayer(state: GameState, direction: MoveDirection):
       destinationY,
       heightDelta,
     );
-  const isBlockedByHoleWall =
-    currentSupport !== null &&
-    hasSafeBaseTerrain(state) &&
-    state.terrain.holes.length > 0 &&
-    isNearbyHoleWallAhead(state, nextX, direction, currentSupport.y);
 
   return (
     nextX >= BOARD.xMin &&
     nextX <= BOARD.xMax &&
+    isXInsideMoveTerritory(state, activePlayer.id, nextX) &&
     !nearlyEqual(nextX, targetPlayer.tankPosition.x) &&
     currentSupport !== null &&
     !isBlockedBySideWall &&
-    !isBlockedByHoleWall &&
     Math.abs(currentSupport.slope) <= MAX_TANK_TERRAIN_SLOPE &&
     Math.abs(nextSlope) <= MAX_TANK_TERRAIN_SLOPE &&
     heightDelta <= MAX_TANK_STEP_UP_HEIGHT + 0.01
@@ -622,19 +637,39 @@ export function createPreviewShot(state: GameState, input: ShotInput): ShotResul
 }
 
 function validateAimDirection(shooter: Player, vertex: Point): string[] {
+  const errors: string[] = [];
+
   if (shooter.id === "p1" && vertex.x <= shooter.tankPosition.x) {
-    return [BACKWARD_AIM_MESSAGE];
+    errors.push(BACKWARD_AIM_MESSAGE);
   }
 
   if (shooter.id === "p2" && vertex.x >= shooter.tankPosition.x) {
-    return [BACKWARD_AIM_MESSAGE];
+    errors.push(BACKWARD_AIM_MESSAGE);
   }
 
-  return [];
+  if (shooter.id === "p1" && vertex.x > PLAYER_TERRITORY_LIMIT_X) {
+    errors.push(P1_AIM_LIMIT_MESSAGE);
+  }
+
+  if (shooter.id === "p2" && vertex.x < -PLAYER_TERRITORY_LIMIT_X) {
+    errors.push(P2_AIM_LIMIT_MESSAGE);
+  }
+
+  return errors;
 }
 
 function getOpponentId(playerId: PlayerId): PlayerId {
   return playerId === "p1" ? "p2" : "p1";
+}
+
+function isXInsideMoveTerritory(state: GameState, playerId: PlayerId, x: number): boolean {
+  if (state.mode === "practice") {
+    return true;
+  }
+
+  return playerId === "p1"
+    ? x <= -PLAYER_TERRITORY_LIMIT_X + 0.001
+    : x >= PLAYER_TERRITORY_LIMIT_X - 0.001;
 }
 
 function advancePracticeAfterTargetDefeat(
@@ -711,6 +746,34 @@ function findReachableTankSupport(
   return { y: BOARD.yMin, slope: 0 };
 }
 
+function findCurrentTankSupport(
+  state: GameState,
+  x: number,
+  currentY: number,
+): { y: number; slope: number } | null {
+  const support = findSupportAtX(x, currentY + CURRENT_SUPPORT_REACH_HEIGHT, state.terrain);
+
+  if (!support) {
+    return hasSafeBaseTerrain(state) ? { y: BOARD.yMin, slope: 0 } : null;
+  }
+
+  if (Math.abs(support.slope) <= MAX_TANK_TERRAIN_SLOPE) {
+    return support;
+  }
+
+  const lowerSupport = findSupportAtX(x, support.y - SUPPORT_TOLERANCE * 2, state.terrain);
+
+  if (
+    lowerSupport &&
+    Math.abs(lowerSupport.slope) <= MAX_TANK_TERRAIN_SLOPE &&
+    Math.abs(currentY - lowerSupport.y) <= CURRENT_SUPPORT_REACH_HEIGHT
+  ) {
+    return lowerSupport;
+  }
+
+  return support;
+}
+
 function hasSafeBaseTerrain(state: GameState): boolean {
   return state.mode === "normal" || state.mode === "practice";
 }
@@ -729,7 +792,7 @@ function isTerrainSideWallInMovePath(
   const bodyBottom = currentY + SIDE_WALL_TOLERANCE;
   const bodyTop = currentY + TANK_SIDE_BODY_HEIGHT;
 
-  return state.terrain.blocks.some((block) => {
+  const isBlockedByBlockSide = state.terrain.blocks.some((block) => {
     const faceX = direction === 1 ? block.x : block.x + block.width;
     const blockTop = block.y + block.height;
     const blockBottom = block.y;
@@ -746,6 +809,14 @@ function isTerrainSideWallInMovePath(
       return false;
     }
 
+    const isDroppingPastPlatformEdge =
+      destinationY < currentY - SIDE_WALL_TOLERANCE &&
+      blockTop <= currentY + SIDE_WALL_TOLERANCE;
+
+    if (isDroppingPastPlatformEdge) {
+      return false;
+    }
+
     const isSmallStepOntoTop =
       destinationY >= blockTop - SIDE_WALL_TOLERANCE &&
       heightDelta >= -SIDE_WALL_TOLERANCE &&
@@ -753,29 +824,51 @@ function isTerrainSideWallInMovePath(
 
     return !isSmallStepOntoTop;
   });
-}
 
-function isNearbyHoleWallAhead(
-  state: GameState,
-  nextX: number,
-  direction: MoveDirection,
-  currentY: number,
-): boolean {
-  const lookAheadX = roundToStep(nextX + direction * MOVE_STEP);
-
-  if (lookAheadX < BOARD.xMin || lookAheadX > BOARD.xMax) {
-    return false;
+  if (isBlockedByBlockSide) {
+    return true;
   }
 
-  const supportAhead = findSupportAtX(lookAheadX, BOARD.yMax, state.terrain);
+  return state.terrain.segments.some((segment) => {
+    const leftEndpoint =
+      segment.x1 <= segment.x2
+        ? { x: segment.x1, y: segment.y1 }
+        : { x: segment.x2, y: segment.y2 };
+    const rightEndpoint =
+      segment.x1 <= segment.x2
+        ? { x: segment.x2, y: segment.y2 }
+        : { x: segment.x1, y: segment.y1 };
+    const face = direction === 1 ? leftEndpoint : rightEndpoint;
+    const faceTop = face.y;
+    const faceBottom = face.y - AIR_TERRAIN_HEIGHT;
 
-  if (!supportAhead) {
-    return false;
-  }
+    if (face.x < pathMin || face.x > pathMax) {
+      return false;
+    }
 
-  const heightDifference = supportAhead.y - currentY;
+    const overlapsTankSide =
+      faceTop >= bodyBottom - SIDE_WALL_TOLERANCE &&
+      faceBottom <= bodyTop + SIDE_WALL_TOLERANCE;
 
-  return heightDifference > MAX_TANK_TERRAIN_SLOPE * MOVE_STEP + 0.01 && heightDifference <= 1;
+    if (!overlapsTankSide) {
+      return false;
+    }
+
+    const isDroppingPastPlatformEdge =
+      destinationY < currentY - SIDE_WALL_TOLERANCE &&
+      faceTop <= currentY + SIDE_WALL_TOLERANCE;
+
+    if (isDroppingPastPlatformEdge) {
+      return false;
+    }
+
+    const isSmallStepOntoTop =
+      destinationY >= faceTop - SIDE_WALL_TOLERANCE &&
+      heightDelta >= -SIDE_WALL_TOLERANCE &&
+      heightDelta <= MAX_TANK_STEP_UP_HEIGHT + SIDE_WALL_TOLERANCE;
+
+    return !isSmallStepOntoTop;
+  });
 }
 
 export function isVertexInsideBoard(input: ShotInput): boolean {

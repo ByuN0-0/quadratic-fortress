@@ -4,6 +4,8 @@ import {
   MAX_TURN_MOVE,
   MAX_TANK_STEP_UP_HEIGHT,
   MOVE_STEP,
+  P1_AIM_LIMIT_MESSAGE,
+  P2_AIM_LIMIT_MESSAGE,
   applyLastShot,
   canMoveActivePlayer,
   continuePracticeAfterSuccess,
@@ -201,6 +203,50 @@ describe("game reducer", () => {
     expect(next.activePlayerId).toBe("p2");
   });
 
+  it("blocks 1P from aiming beyond x=1", () => {
+    const state = createFlatShotState();
+    const preview = createPreviewShot(state, { vertexX: 2, vertexY: 6 });
+    const submitted = submitShot(state, { vertexX: 2, vertexY: 6 });
+
+    expect(preview.validationErrors).toContain(P1_AIM_LIMIT_MESSAGE);
+    expect(submitted.lastShot?.validationErrors).toContain(P1_AIM_LIMIT_MESSAGE);
+    expect(submitted.shotHistory).toHaveLength(0);
+    expect(submitted.activePlayerId).toBe("p1");
+  });
+
+  it("blocks 2P from aiming beyond x=-1", () => {
+    const state = {
+      ...createFlatShotState(),
+      activePlayerId: "p2" as const,
+      players: [
+        { ...createFlatShotState().players[0], isActive: false },
+        { ...createFlatShotState().players[1], isActive: true },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+    };
+    const preview = createPreviewShot(state, { vertexX: -2, vertexY: 6 });
+    const submitted = submitShot(state, { vertexX: -2, vertexY: 6 });
+
+    expect(preview.validationErrors).toContain(P2_AIM_LIMIT_MESSAGE);
+    expect(submitted.lastShot?.validationErrors).toContain(P2_AIM_LIMIT_MESSAGE);
+    expect(submitted.shotHistory).toHaveLength(0);
+    expect(submitted.activePlayerId).toBe("p2");
+  });
+
+  it("keeps forward aiming valid inside the limited vertex range", () => {
+    const p1State = createFlatShotState();
+    const p2State = {
+      ...createFlatShotState(),
+      activePlayerId: "p2" as const,
+      players: [
+        { ...createFlatShotState().players[0], isActive: false },
+        { ...createFlatShotState().players[1], isActive: true },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+    };
+
+    expect(createPreviewShot(p1State, { vertexX: 1, vertexY: 6 }).validationErrors).toHaveLength(0);
+    expect(createPreviewShot(p2State, { vertexX: -1, vertexY: 6 }).validationErrors).toHaveLength(0);
+  });
+
   it("uses the same forward-aim rule in practice mode", () => {
     const state = createPracticeGameState(1);
     const next = submitShot(state, { vertexX: -9, vertexY: 6 });
@@ -209,6 +255,15 @@ describe("game reducer", () => {
     expect(next.shotHistory).toHaveLength(0);
     expect(next.activePlayerId).toBe("p1");
     expect(next.practice).toEqual({ step: 1, isComplete: false, pendingNextStep: null });
+  });
+
+  it("keeps practice stage 2 movement available", () => {
+    const state = createPracticeGameState(2);
+    const moved = moveActivePlayer(state, 1);
+
+    expect(canMoveActivePlayer(state, 1)).toBe(true);
+    expect(moved.players[0].tankPosition.x).toBe(-7.9);
+    expect(moved.activePlayerId).toBe("p1");
   });
 
   it("keeps practice mode on 1P turn when the target survives", () => {
@@ -314,6 +369,37 @@ describe("game reducer", () => {
     expect(getRemainingMove(afterLimit)).toBe(0);
   });
 
+  it("blocks 1P from moving past x=-1", () => {
+    const state = {
+      ...createFlatShotState(),
+      players: [
+        { ...createFlatShotState().players[0], tankPosition: { x: -1, y: 0 } },
+        createFlatShotState().players[1],
+      ] as ReturnType<typeof createInitialGameState>["players"],
+    };
+
+    expect(canMoveActivePlayer(state, 1)).toBe(false);
+    expect(moveActivePlayer(state, 1)).toBe(state);
+  });
+
+  it("blocks 2P from moving past x=1", () => {
+    const state = {
+      ...createFlatShotState(),
+      activePlayerId: "p2" as const,
+      players: [
+        { ...createFlatShotState().players[0], isActive: false },
+        {
+          ...createFlatShotState().players[1],
+          tankPosition: { x: 1, y: 0 },
+          isActive: true,
+        },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+    };
+
+    expect(canMoveActivePlayer(state, -1)).toBe(false);
+    expect(moveActivePlayer(state, -1)).toBe(state);
+  });
+
   it("does not move outside the board", () => {
     let state: ReturnType<typeof createInitialGameState> = {
       ...createInitialGameState(),
@@ -367,7 +453,7 @@ describe("game reducer", () => {
       players: [
         {
           ...createInitialGameState().players[0],
-          tankPosition: { x: 0, y: 0 },
+          tankPosition: { x: -2, y: 0 },
         },
         {
           ...createInitialGameState().players[1],
@@ -376,7 +462,7 @@ describe("game reducer", () => {
       ] as ReturnType<typeof createInitialGameState>["players"],
       terrain: {
         blocks: [] as ReturnType<typeof createInitialGameState>["terrain"]["blocks"],
-        segments: [{ id: "steep", x1: 0, y1: 0, x2: 1, y2: 2 }],
+        segments: [{ id: "steep", x1: -2, y1: 0, x2: -1, y2: 2 }],
         holes: [],
       },
     };
@@ -391,7 +477,7 @@ describe("game reducer", () => {
       players: [
         {
           ...createInitialGameState().players[0],
-          tankPosition: { x: 0, y: 0 },
+          tankPosition: { x: -2, y: 0 },
         },
         {
           ...createInitialGameState().players[1],
@@ -400,14 +486,15 @@ describe("game reducer", () => {
       ] as ReturnType<typeof createInitialGameState>["players"],
       terrain: {
         blocks: [] as ReturnType<typeof createInitialGameState>["terrain"]["blocks"],
-        segments: [{ id: "gentle", x1: 0, y1: 0, x2: 1, y2: 1 }],
+        segments: [{ id: "gentle", x1: -2, y1: 0, x2: -1, y2: 1 }],
         holes: [],
       },
     };
 
     const moved = moveActivePlayer(state, 1);
 
-    expect(moved.players[0].tankPosition).toEqual({ x: 0.1, y: 0.1 });
+    expect(moved.players[0].tankPosition.x).toBe(-1.9);
+    expect(moved.players[0].tankPosition.y).toBeCloseTo(0.1);
   });
 
   it("allows moving off a cliff and landing on lower terrain", () => {
@@ -416,7 +503,7 @@ describe("game reducer", () => {
       players: [
         {
           ...createInitialGameState().players[0],
-          tankPosition: { x: 0.1, y: 4 },
+          tankPosition: { x: -2.1, y: 4 },
         },
         {
           ...createInitialGameState().players[1],
@@ -425,8 +512,8 @@ describe("game reducer", () => {
       ] as ReturnType<typeof createInitialGameState>["players"],
       terrain: {
         blocks: [
-          { id: "ledge", x: -1, y: 3.5, width: 1.1, height: 0.5 },
-          { id: "floor", x: 0.1, y: 0, width: 2, height: 0.5 },
+          { id: "ledge", x: -3, y: 3.5, width: 0.9, height: 0.5 },
+          { id: "floor", x: -2, y: 0, width: 1, height: 0.5 },
         ] as ReturnType<typeof createInitialGameState>["terrain"]["blocks"],
         segments: [],
         holes: [],
@@ -436,7 +523,7 @@ describe("game reducer", () => {
     const moved = moveActivePlayer(state, 1);
 
     expect(canMoveActivePlayer(state, 1)).toBe(true);
-    expect(moved.players[0].tankPosition).toEqual({ x: 0.2, y: 0.5 });
+    expect(moved.players[0].tankPosition).toEqual({ x: -2, y: 0.5 });
     expect(moved.movementUsed).toBe(0.1);
   });
 
@@ -464,7 +551,7 @@ describe("game reducer", () => {
       players: [
         {
           ...createInitialGameState().players[0],
-          tankPosition: { x: 0.05, y: 4 },
+          tankPosition: { x: -2.1, y: 4 },
         },
         {
           ...createInitialGameState().players[1],
@@ -473,8 +560,8 @@ describe("game reducer", () => {
       ] as ReturnType<typeof createInitialGameState>["players"],
       terrain: {
         blocks: [
-          { id: "ledge", x: -1, y: 3.5, width: 1.1, height: 0.5 },
-          { id: "floor", x: 1, y: 0, width: 2, height: 0.5 },
+          { id: "ledge", x: -3, y: 3.5, width: 0.9, height: 0.5 },
+          { id: "floor", x: -1, y: 0, width: 1, height: 0.5 },
         ] as ReturnType<typeof createInitialGameState>["terrain"]["blocks"],
         segments: [],
         holes: [],
@@ -484,7 +571,7 @@ describe("game reducer", () => {
     const moved = moveActivePlayer(state, 1);
 
     expect(canMoveActivePlayer(state, 1)).toBe(true);
-    expect(moved.players[0].tankPosition).toEqual({ x: 0.2, y: 0 });
+    expect(moved.players[0].tankPosition).toEqual({ x: -2, y: 0 });
   });
 
   it("blocks stepping up more than the maximum tank climb height", () => {
@@ -541,13 +628,40 @@ describe("game reducer", () => {
     expect(moveActivePlayer(state, 1)).toBe(state);
   });
 
+  it("blocks moving through the exposed side wall of a sloped terrain segment", () => {
+    const state = {
+      ...createInitialGameState(),
+      activePlayerId: "p2" as const,
+      players: [
+        {
+          ...createInitialGameState().players[0],
+          tankPosition: { x: -8, y: 2 },
+          isActive: false,
+        },
+        {
+          ...createInitialGameState().players[1],
+          tankPosition: { x: 6.9, y: 2 },
+          isActive: true,
+        },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+      terrain: {
+        blocks: [{ id: "base", x: -10, y: 0, width: 20, height: 2 }],
+        segments: [{ id: "right-slope", x1: 1.5, y1: 4.5, x2: 6.8, y2: 2.5 }],
+        holes: [],
+      },
+    };
+
+    expect(canMoveActivePlayer(state, -1)).toBe(false);
+    expect(moveActivePlayer(state, -1)).toBe(state);
+  });
+
   it("declares a winner when moving off a cliff into the sea", () => {
     const state = {
       ...createInitialGameState("ocean"),
       players: [
         {
           ...createInitialGameState("ocean").players[0],
-          tankPosition: { x: 0.1, y: 4 },
+          tankPosition: { x: -2.1, y: 4 },
         },
         {
           ...createInitialGameState("ocean").players[1],
@@ -555,7 +669,7 @@ describe("game reducer", () => {
         },
       ] as ReturnType<typeof createInitialGameState>["players"],
       terrain: {
-        blocks: [{ id: "ledge", x: -1, y: 3.5, width: 1.1, height: 0.5 }] as ReturnType<
+        blocks: [{ id: "ledge", x: -3, y: 3.5, width: 0.9, height: 0.5 }] as ReturnType<
           typeof createInitialGameState
         >["terrain"]["blocks"],
         segments: [],
@@ -566,7 +680,7 @@ describe("game reducer", () => {
     const moved = moveActivePlayer(state, 1);
 
     expect(canMoveActivePlayer(state, 1)).toBe(true);
-    expect(moved.players[0].tankPosition).toEqual({ x: 0.2, y: -1 });
+    expect(moved.players[0].tankPosition).toEqual({ x: -2, y: -1 });
     expect(moved.winnerId).toBe("p2");
   });
 
@@ -592,6 +706,113 @@ describe("game reducer", () => {
 
     expect(canMoveActivePlayer(state, 1)).toBe(false);
     expect(moveActivePlayer(state, 1)).toBe(state);
+  });
+
+  it("blocks movement while standing on a steep circular hole boundary", () => {
+    const state = {
+      ...createInitialGameState(),
+      activePlayerId: "p2" as const,
+      players: [
+        {
+          ...createInitialGameState().players[0],
+          tankPosition: { x: -8, y: 2 },
+          isActive: false,
+        },
+        {
+          ...createInitialGameState().players[1],
+          tankPosition: { x: 7.1, y: 1.56 },
+          isActive: true,
+        },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+      terrain: {
+        blocks: [{ id: "base", x: -10, y: 0, width: 20, height: 2 }],
+        segments: [],
+        holes: [{ id: "blast", x: 8, y: 2, radius: 1 }],
+      },
+    };
+
+    expect(canMoveActivePlayer(state, 1)).toBe(false);
+    expect(canMoveActivePlayer(state, -1)).toBe(false);
+  });
+
+  it("blocks crossing into a circular blast hole through its side entrance", () => {
+    const state = {
+      ...createInitialGameState(),
+      activePlayerId: "p2" as const,
+      players: [
+        {
+          ...createInitialGameState().players[0],
+          tankPosition: { x: -8, y: 2 },
+          isActive: false,
+        },
+        {
+          ...createInitialGameState().players[1],
+          tankPosition: { x: 6.95, y: 2 },
+          isActive: true,
+        },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+      terrain: {
+        blocks: [{ id: "base", x: -10, y: 0, width: 20, height: 2 }],
+        segments: [],
+        holes: [{ id: "blast", x: 8, y: 2, radius: 1 }],
+      },
+    };
+
+    expect(canMoveActivePlayer(state, 1)).toBe(false);
+    expect(moveActivePlayer(state, 1)).toBe(state);
+  });
+
+  it("allows dropping along a circular blast hole boundary when the slope is gentle", () => {
+    const state = {
+      ...createInitialGameState(),
+      activePlayerId: "p2" as const,
+      players: [
+        {
+          ...createInitialGameState().players[0],
+          tankPosition: { x: -8, y: 2 },
+          isActive: false,
+        },
+        {
+          ...createInitialGameState().players[1],
+          tankPosition: { x: 7.4, y: 1.2 },
+          isActive: true,
+        },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+      terrain: {
+        blocks: [{ id: "base", x: -10, y: 0, width: 20, height: 2 }],
+        segments: [],
+        holes: [{ id: "blast", x: 8, y: 2, radius: 1 }],
+      },
+    };
+
+    const moved = moveActivePlayer(state, 1);
+
+    expect(canMoveActivePlayer(state, 1)).toBe(true);
+    expect(moved.players[1].tankPosition.x).toBe(7.5);
+    expect(moved.players[1].tankPosition.y).toBeCloseTo(1.13);
+  });
+
+  it("uses the nearby flat support when a crater boundary overlaps the tank position", () => {
+    const state = {
+      ...createInitialGameState(),
+      players: [
+        {
+          ...createInitialGameState().players[0],
+          tankPosition: { x: -2, y: 4.4 },
+        },
+        {
+          ...createInitialGameState().players[1],
+          tankPosition: { x: 8, y: 2 },
+        },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+      terrain: {
+        blocks: [{ id: "platform", x: -2.2, y: 4, width: 1.2, height: 0.4 }],
+        segments: [],
+        holes: [{ id: "blast", x: -2.6, y: 4.2, radius: 0.9 }],
+      },
+    };
+
+    expect(canMoveActivePlayer(state, 1)).toBe(true);
   });
 
   it("does not snap from the base ground up to an overhead platform", () => {
