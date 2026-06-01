@@ -32,7 +32,7 @@ export type TerrainState = {
   holes: TerrainHole[];
 };
 
-export type TerrainMapId = "map1" | "map2" | "map3";
+export type TerrainMapId = "map1" | "map2" | "map3" | "map4";
 
 export type TerrainHole = {
   id: string;
@@ -44,7 +44,7 @@ export type TerrainHole = {
 export const AIR_TERRAIN_HEIGHT = 0.5;
 export const SUPPORT_TOLERANCE = 0.08;
 export const OCEAN_FALL_Y = -1;
-export const TERRAIN_MAP_IDS: TerrainMapId[] = ["map1", "map2", "map3"];
+export const TERRAIN_MAP_IDS: TerrainMapId[] = ["map1", "map2", "map3", "map4"];
 
 const INITIAL_TERRAIN_BY_MAP: Record<
   TerrainMapId,
@@ -84,6 +84,10 @@ const INITIAL_TERRAIN_BY_MAP: Record<
   },
   map3: {
     blocks: createMapThreeBlocks(),
+    segments: [],
+  },
+  map4: {
+    blocks: createMapFourBlocks(),
     segments: [],
   },
 };
@@ -135,7 +139,7 @@ function createLowerFoundationBlocks(prefix: string): TerrainBlock[] {
     { id: `${prefix}-base`, x: -10, y: 0, width: 20, height: 2, isFoundation: true },
     { id: `${prefix}-left-side`, x: -10, y: 2, width: 1, height: 0.9, isFoundation: true },
     { id: `${prefix}-right-side`, x: 9, y: 2, width: 1, height: 0.9, isFoundation: true },
-    { id: `${prefix}-center`, x: -2, y: 2, width: 4, height: 1.9, isFoundation: true },
+    { id: `${prefix}-center`, x: -2, y: 2, width: 4, height: 1.4, isFoundation: true },
   ];
 }
 
@@ -147,10 +151,11 @@ function createMapThreeBlocks(): TerrainBlock[] {
     ...createBlockGrid("map3-left-lower", -7, 3, 2, 2),
     ...createHalfBlockRow("map3-left-mid-a", -9, 4.5, 2),
     ...createHalfBlockRow("map3-left-mid-b", -9, 3, 2),
-    ...createBlockGrid("map3-center-left-wall", -2, 7, 1, 3),
-    ...createBlockGrid("map3-center-right-wall", 1, 7, 1, 3),
-    ...createBlockRow("map3-center-top", -1, 9, 2),
-    ...createBlockGrid("map3-center-column", 0, 1, 1, 4),
+    ...createBlockRow("map3-center-top", -2, 9, 4),
+    ...createBlockGrid("map3-center-left-wall", -2, 7, 1, 2),
+    ...createBlockGrid("map3-center-right-wall", 1, 7, 1, 2),
+    ...createBlockRow("map3-center-bottom", -2, 6, 4),
+    ...createBlockGrid("map3-center-column", 0, 1, 1, 5),
     ...createBlockRow("map3-center-column-foot", -1, 0.5, 2),
     ...createHalfBlockRow("map3-center-half-left-a", -1, 4, 1),
     ...createHalfBlockRow("map3-center-half-left-b", -1, 3, 1),
@@ -160,6 +165,28 @@ function createMapThreeBlocks(): TerrainBlock[] {
     ...createBlockGrid("map3-right-lower", 5, 2, 2, 2),
     ...createHalfBlockRow("map3-right-mid-a", 7, 3.5, 2),
     ...createHalfBlockRow("map3-right-mid-b", 7, 2, 2),
+  ];
+}
+
+function createMapFourBlocks(): TerrainBlock[] {
+  return [
+    ...createBlockRow("map4-left-a", -9, 8, 2),
+    ...createBlockRow("map4-left-b", -7, 7, 2),
+    ...createBlockRow("map4-left-c", -9, 6, 2),
+    ...createBlockRow("map4-left-d", -7, 5, 2),
+    ...createBlockRow("map4-left-e", -9, 4, 2),
+    ...createBlockRow("map4-left-f", -7, 3, 2),
+    ...createBlockRow("map4-left-g", -9, 2, 2),
+    ...createBlockRow("map4-left-h", -5, 6, 2),
+    ...createBlockRow("map4-left-i", -5, 4, 2),
+    ...createBlockRow("map4-right-a", 7, 7, 2),
+    ...createBlockRow("map4-right-b", 5, 6, 2),
+    ...createBlockRow("map4-right-c", 3, 5, 2),
+    ...createBlockRow("map4-right-d", 7, 5, 2),
+    ...createBlockRow("map4-right-e", 5, 4, 2),
+    ...createBlockRow("map4-right-f", 3, 3, 2),
+    ...createBlockRow("map4-right-g", 5, 2, 2),
+    ...createBlockRow("map4-right-h", 7, 1, 2),
   ];
 }
 
@@ -216,7 +243,8 @@ export function getTerrainMapLabel(mapId: TerrainMapId): string {
   const labels: Record<TerrainMapId, string> = {
     map1: "3학년 1반",
     map2: "3학년 2반",
-    map3: "맵3",
+    map3: "열쇠",
+    map4: "체크 타일",
   };
 
   return labels[mapId];

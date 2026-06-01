@@ -42,6 +42,12 @@ describe("quadratic math", () => {
     );
   });
 
+  it("rejects vertices that are not above the shooter", () => {
+    expect(validateVertex({ x: 0, y: 6 }, { x: -8, y: 6.1 })).toContain(
+      "Vertex y must be higher than the tank.",
+    );
+  });
+
   it("rejects decimal vertices with the same x as the shooter", () => {
     expect(validateVertex({ x: -7.9, y: 6 }, { x: -7.9, y: 0 })).toContain(
       "꼭짓점 x가 탱크 x와 같으면 a값을 계산할 수 없습니다.",

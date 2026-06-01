@@ -278,29 +278,37 @@ export function canMoveActivePlayer(state: GameState, direction: MoveDirection):
   const activePlayer = getActivePlayer(state);
   const targetPlayer = getTargetPlayer(state);
   const nextX = roundToStep(activePlayer.tankPosition.x + direction * MOVE_STEP);
+  const rawNextSupport = findSupportAtX(
+    nextX,
+    activePlayer.tankPosition.y + MAX_TANK_TERRAIN_SLOPE * MOVE_STEP,
+    state.terrain,
+  );
   const currentSupport = findReachableTankSupport(
     state,
     activePlayer.tankPosition.x,
     activePlayer.tankPosition.y,
   );
   const nextSupport = findReachableTankSupport(state, nextX, activePlayer.tankPosition.y);
-  const canStandOnNextSupport =
-    nextSupport !== null;
   const nextSlope = nextSupport?.slope ?? 0;
-  const movementSlope =
+  const climbSlope =
     currentSupport && nextSupport
-      ? Math.abs(nextSupport.y - currentSupport.y) / MOVE_STEP
-      : Infinity;
+      ? (nextSupport.y - currentSupport.y) / MOVE_STEP
+      : -Infinity;
+  const isBlockedByNearbyWall =
+    currentSupport !== null &&
+    rawNextSupport === null &&
+    state.mode === "normal" &&
+    isNearbyTerrainWallAhead(state, nextX, direction, currentSupport.y);
 
   return (
     nextX >= BOARD.xMin &&
     nextX <= BOARD.xMax &&
     !nearlyEqual(nextX, targetPlayer.tankPosition.x) &&
-    canStandOnNextSupport &&
     currentSupport !== null &&
+    !isBlockedByNearbyWall &&
     Math.abs(currentSupport.slope) <= MAX_TANK_TERRAIN_SLOPE &&
     Math.abs(nextSlope) <= MAX_TANK_TERRAIN_SLOPE &&
-    movementSlope <= MAX_TANK_TERRAIN_SLOPE + 0.01
+    climbSlope <= MAX_TANK_TERRAIN_SLOPE + 0.01
   );
 }
 
@@ -332,6 +340,8 @@ export function moveActivePlayer(state: GameState, direction: MoveDirection): Ga
     players: nextPlayers,
     movementUsed: roundToStep(Math.min(MAX_TURN_MOVE, state.movementUsed + MOVE_STEP)),
     lastShot: null,
+    winnerId:
+      state.mode === "ocean" && !nextSupport ? getOpponentId(activePlayer.id) : state.winnerId,
   };
 }
 
@@ -426,11 +436,34 @@ function findReachableTankSupport(
   const maxReachY = currentY + MAX_TANK_TERRAIN_SLOPE * MOVE_STEP;
   const support = findSupportAtX(x, maxReachY, state.terrain);
 
-  if (support || state.mode !== "normal" || state.terrain.holes.length > 0) {
+  if (support || state.mode !== "normal") {
     return support;
   }
 
   return { y: BOARD.yMin, slope: 0 };
+}
+
+function isNearbyTerrainWallAhead(
+  state: GameState,
+  nextX: number,
+  direction: MoveDirection,
+  currentY: number,
+): boolean {
+  const lookAheadX = roundToStep(nextX + direction * MOVE_STEP);
+
+  if (lookAheadX < BOARD.xMin || lookAheadX > BOARD.xMax) {
+    return false;
+  }
+
+  const supportAhead = findSupportAtX(lookAheadX, BOARD.yMax, state.terrain);
+
+  if (!supportAhead) {
+    return false;
+  }
+
+  const heightDifference = supportAhead.y - currentY;
+
+  return heightDifference > MAX_TANK_TERRAIN_SLOPE * MOVE_STEP + 0.01 && heightDifference <= 1;
 }
 
 export function isVertexInsideBoard(input: ShotInput): boolean {

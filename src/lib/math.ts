@@ -96,6 +96,10 @@ export function validateVertex(vertex: Point, shooter: Point): string[] {
     errors.push(`꼭짓점 y는 0보다 크고 ${BOARD.yMax} 이하여야 합니다.`);
   }
 
+  if (vertex.y <= shooter.y + FLOAT_EPSILON) {
+    errors.push("Vertex y must be higher than the tank.");
+  }
+
   if (nearlyEqual(vertex.x, shooter.x)) {
     errors.push("꼭짓점 x가 탱크 x와 같으면 a값을 계산할 수 없습니다.");
   }

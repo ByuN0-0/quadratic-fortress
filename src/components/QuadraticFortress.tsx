@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import rough from "roughjs";
 import {
@@ -27,8 +27,6 @@ import {
   getTargetPlayer,
   moveActivePlayer,
   prepareShot,
-  MAX_TURN_MOVE,
-  MOVE_STEP,
   type MoveDirection,
   type GameState,
   type GameMode,
@@ -90,7 +88,7 @@ type Players = GameState["players"];
 export default function QuadraticFortress() {
   const [game, setGame] = useState<GameState>(() => createInitialGameState());
   const [aimInputByPlayer, setAimInputByPlayer] = useState<AimInputByPlayer>(() =>
-    createInitialAimInputByPlayer(),
+    createInitialAimInputByPlayer(game.players),
   );
   const [tutorial, setTutorial] = useState<TutorialState>(() => createInitialTutorialState(true));
   const [screenMode, setScreenMode] = useState<ScreenMode>("menu");
@@ -149,7 +147,7 @@ export default function QuadraticFortress() {
 
     const nextGame = createInitialGameState(mode, mapId);
     setGame(nextGame);
-    setAimInputByPlayer(createInitialAimInputByPlayer());
+    setAimInputByPlayer(createInitialAimInputByPlayer(nextGame.players));
     setAnimationProgress(1);
     setIsResultOpen(false);
     setIsHistoryOpen(false);
@@ -427,9 +425,12 @@ export default function QuadraticFortress() {
     setVisualPlayers(startGame.players);
 
     const startedAt = performance.now();
+    const isFallingMove = endPlayer.tankPosition.y < startPlayer.tankPosition.y;
     const tick = (now: number) => {
       const progress = Math.min(1, (now - startedAt) / MOVE_ANIMATION_DURATION);
       const easedProgress = 1 - (1 - progress) ** 2;
+      const horizontalProgress = isFallingMove ? Math.min(1, easedProgress * 2) : easedProgress;
+      const fallProgress = isFallingMove ? Math.max(0, easedProgress * 2 - 1) : easedProgress;
       const nextPlayers = endGame.players.map((player) => {
         if (player.id !== playerId) {
           return player;
@@ -440,10 +441,10 @@ export default function QuadraticFortress() {
           tankPosition: {
             x:
               startPlayer.tankPosition.x +
-              (endPlayer.tankPosition.x - startPlayer.tankPosition.x) * easedProgress,
+              (endPlayer.tankPosition.x - startPlayer.tankPosition.x) * horizontalProgress,
             y:
               startPlayer.tankPosition.y +
-              (endPlayer.tankPosition.y - startPlayer.tankPosition.y) * easedProgress,
+              (endPlayer.tankPosition.y - startPlayer.tankPosition.y) * fallProgress,
           },
         };
       }) as Players;
@@ -515,7 +516,7 @@ export default function QuadraticFortress() {
 
     const nextGame = createInitialGameState(game.mode, game.mapId);
     setGame(nextGame);
-    setAimInputByPlayer(createInitialAimInputByPlayer());
+    setAimInputByPlayer(createInitialAimInputByPlayer(nextGame.players));
     setAnimationProgress(1);
     setIsResultOpen(false);
     setIsHistoryOpen(false);
@@ -900,10 +901,8 @@ function AimControls({
       <div className="move-console" aria-label="탱크 이동">
         <div>
           <p className="eyebrow">Move</p>
-          <strong>
-            남은 이동 {formatCoordinate(remainingMove)}/{formatCoordinate(MAX_TURN_MOVE)}
-          </strong>
-          <small>{moveStatus}</small>
+          <strong>이동 가능: {formatCoordinate(remainingMove)}칸</strong>
+          {moveStatus ? <small>{moveStatus}</small> : null}
         </div>
         <div className="move-buttons">
           <button
@@ -985,17 +984,17 @@ function getMoveStatus(game: GameState, remainingMove: number, isShotAnimating: 
   }
 
   if (remainingMove <= 0) {
-    return "이번 턴 이동 완료";
+    return "이동 완료";
   }
 
   const canMoveLeft = canMoveActivePlayer(game, -1);
   const canMoveRight = canMoveActivePlayer(game, 1);
 
   if (!canMoveLeft && !canMoveRight) {
-    return "이동할 공간 없음";
+    return "이동 불가";
   }
 
-  return `발사 전 좌우 ${formatCoordinate(MOVE_STEP)}칸 이동 가능`;
+  return "";
 }
 
 function formatPoint(point: Point): string {
@@ -1012,10 +1011,22 @@ function createDisplayHpByPlayer(players: GameState["players"]): DisplayHpByPlay
   );
 }
 
-function createInitialAimInputByPlayer(): AimInputByPlayer {
+function createInitialAimInputByPlayer(players?: GameState["players"]): AimInputByPlayer {
+  const getInput = (playerId: PlayerId): ShotInput => {
+    const player = players?.find((candidate) => candidate.id === playerId);
+    const vertexY = player
+      ? Math.min(BOARD.yMax, Math.max(DEFAULT_INPUT.vertexY, roundToStep(player.tankPosition.y + 1.5)))
+      : DEFAULT_INPUT.vertexY;
+
+    return {
+      ...DEFAULT_INPUT,
+      vertexY,
+    };
+  };
+
   return {
-    p1: { ...DEFAULT_INPUT },
-    p2: { ...DEFAULT_INPUT },
+    p1: getInput("p1"),
+    p2: getInput("p2"),
   };
 }
 
@@ -1788,16 +1799,7 @@ function drawTerrain(
 
   layerCtx.setTransform(ctx.getTransform());
 
-  for (const block of terrain.blocks) {
-    const topLeft = toScreen({ x: block.x, y: block.y + block.height });
-    const bottomRight = toScreen({ x: block.x + block.width, y: block.y });
-    fillTerrainPolygon(layerCtx, [
-      topLeft,
-      toScreen({ x: block.x + block.width, y: block.y + block.height }),
-      bottomRight,
-      toScreen({ x: block.x, y: block.y }),
-    ]);
-  }
+  fillBlockTerrain(layerCtx, toScreen, terrain.blocks);
 
   for (const segment of terrain.segments) {
     fillTerrainPolygon(layerCtx, [
@@ -1816,6 +1818,38 @@ function drawTerrain(
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(terrainLayer, 0, 0);
+  ctx.restore();
+}
+
+function fillBlockTerrain(
+  ctx: CanvasRenderingContext2D,
+  toScreen: (point: Point) => ScreenPoint,
+  blocks: GameState["terrain"]["blocks"],
+) {
+  if (blocks.length === 0) {
+    return;
+  }
+
+  ctx.save();
+  ctx.beginPath();
+
+  for (const block of blocks) {
+    const topLeft = toScreen({ x: block.x, y: block.y + block.height });
+    const topRight = toScreen({ x: block.x + block.width, y: block.y + block.height });
+    const bottomRight = toScreen({ x: block.x + block.width, y: block.y });
+    const bottomLeft = toScreen({ x: block.x, y: block.y });
+
+    ctx.moveTo(topLeft.x, topLeft.y);
+    ctx.lineTo(topRight.x, topRight.y);
+    ctx.lineTo(bottomRight.x, bottomRight.y);
+    ctx.lineTo(bottomLeft.x, bottomLeft.y);
+    ctx.closePath();
+  }
+
+  ctx.fillStyle = "#fde68a";
+  ctx.fill();
+  ctx.fillStyle = "rgba(180, 83, 9, 0.18)";
+  ctx.fill();
   ctx.restore();
 }
 
@@ -1849,42 +1883,227 @@ function strokeTerrainOutline(
   ctx.lineWidth = 2;
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
+  clipToBoard(ctx, toScreen);
 
-  for (const block of terrain.blocks) {
-    if (!isHorizontalBlockEdgeShared(terrain, block.id, block.x, block.x + block.width, block.y + block.height)) {
-      strokeTerrainEdge(
-        ctx,
-        toScreen({ x: block.x, y: block.y + block.height }),
-        toScreen({ x: block.x + block.width, y: block.y + block.height }),
-      );
-    }
-    if (!isHorizontalBlockEdgeShared(terrain, block.id, block.x, block.x + block.width, block.y)) {
-      strokeTerrainEdge(ctx, toScreen({ x: block.x, y: block.y }), toScreen({ x: block.x + block.width, y: block.y }));
-    }
-    strokeTerrainCapIfExposed(ctx, toScreen, terrain, block.id, block.x, block.y + block.height, block.y);
-    strokeTerrainCapIfExposed(
-      ctx,
-      toScreen,
-      terrain,
-      block.id,
-      block.x + block.width,
-      block.y + block.height,
-      block.y,
-    );
-  }
+  strokeBlockTerrainGridOutline(ctx, toScreen, terrain);
 
   for (const segment of terrain.segments) {
-    strokeTerrainEdge(ctx, toScreen({ x: segment.x1, y: segment.y1 }), toScreen({ x: segment.x2, y: segment.y2 }));
-    strokeTerrainEdge(
-      ctx,
-      toScreen({ x: segment.x1, y: segment.y1 - 0.5 }),
-      toScreen({ x: segment.x2, y: segment.y2 - 0.5 }),
-    );
+    strokeSegmentEdgeIfExposed(ctx, toScreen, terrain, segment, "top");
+    strokeSegmentEdgeIfExposed(ctx, toScreen, terrain, segment, "bottom");
     strokeTerrainCapIfExposed(ctx, toScreen, terrain, segment.id, segment.x1, segment.y1, segment.y1 - 0.5);
     strokeTerrainCapIfExposed(ctx, toScreen, terrain, segment.id, segment.x2, segment.y2, segment.y2 - 0.5);
   }
 
   ctx.restore();
+}
+
+type TerrainEdge = {
+  fixed: number;
+  from: number;
+  to: number;
+};
+
+function strokeBlockTerrainGridOutline(
+  ctx: CanvasRenderingContext2D,
+  toScreen: (point: Point) => ScreenPoint,
+  terrain: GameState["terrain"],
+) {
+  const { blocks } = terrain;
+
+  if (blocks.length === 0) {
+    return;
+  }
+
+  const xLines = getSortedBlockBoundaries(blocks, "x");
+  const yLines = getSortedBlockBoundaries(blocks, "y");
+  const occupied = new Set<string>();
+
+  for (let xIndex = 0; xIndex < xLines.length - 1; xIndex += 1) {
+    for (let yIndex = 0; yIndex < yLines.length - 1; yIndex += 1) {
+      const center = {
+        x: (xLines[xIndex] + xLines[xIndex + 1]) / 2,
+        y: (yLines[yIndex] + yLines[yIndex + 1]) / 2,
+      };
+
+      if (blocks.some((block) => isPointInsideBlockRect(center, block))) {
+        occupied.add(getGridCellKey(xIndex, yIndex));
+      }
+    }
+  }
+
+  const horizontalEdges: TerrainEdge[] = [];
+  const verticalEdges: TerrainEdge[] = [];
+
+  for (const key of occupied) {
+    const [xIndex, yIndex] = key.split(",").map(Number);
+    const x1 = xLines[xIndex];
+    const x2 = xLines[xIndex + 1];
+    const y1 = yLines[yIndex];
+    const y2 = yLines[yIndex + 1];
+
+    if (
+      !occupied.has(getGridCellKey(xIndex, yIndex + 1)) &&
+      isTerrainGridEdgeExposed(terrain, { fixed: y2, from: x1, to: x2 }, "horizontal", 1)
+    ) {
+      horizontalEdges.push({ fixed: y2, from: x1, to: x2 });
+    }
+    if (
+      !occupied.has(getGridCellKey(xIndex, yIndex - 1)) &&
+      isTerrainGridEdgeExposed(terrain, { fixed: y1, from: x1, to: x2 }, "horizontal", -1)
+    ) {
+      horizontalEdges.push({ fixed: y1, from: x1, to: x2 });
+    }
+    if (
+      !occupied.has(getGridCellKey(xIndex - 1, yIndex)) &&
+      isTerrainGridEdgeExposed(terrain, { fixed: x1, from: y1, to: y2 }, "vertical", -1)
+    ) {
+      verticalEdges.push({ fixed: x1, from: y1, to: y2 });
+    }
+    if (
+      !occupied.has(getGridCellKey(xIndex + 1, yIndex)) &&
+      isTerrainGridEdgeExposed(terrain, { fixed: x2, from: y1, to: y2 }, "vertical", 1)
+    ) {
+      verticalEdges.push({ fixed: x2, from: y1, to: y2 });
+    }
+  }
+
+  for (const edge of mergeTerrainEdges(horizontalEdges)) {
+    strokeTerrainEdge(ctx, toScreen({ x: edge.from, y: edge.fixed }), toScreen({ x: edge.to, y: edge.fixed }));
+  }
+
+  for (const edge of mergeTerrainEdges(verticalEdges)) {
+    strokeTerrainEdge(ctx, toScreen({ x: edge.fixed, y: edge.from }), toScreen({ x: edge.fixed, y: edge.to }));
+  }
+}
+
+function clipToBoard(ctx: CanvasRenderingContext2D, toScreen: (point: Point) => ScreenPoint) {
+  const topLeft = toScreen({ x: BOARD.xMin, y: BOARD.yMax });
+  const bottomRight = toScreen({ x: BOARD.xMax, y: BOARD.yMin });
+
+  ctx.beginPath();
+  ctx.rect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
+  ctx.clip();
+}
+
+function isTerrainGridEdgeExposed(
+  terrain: GameState["terrain"],
+  edge: TerrainEdge,
+  orientation: "horizontal" | "vertical",
+  direction: -1 | 1,
+) {
+  if (
+    (orientation === "horizontal" &&
+      (edge.fixed <= BOARD.yMin + 0.001 || edge.fixed >= BOARD.yMax - 0.001)) ||
+    (orientation === "vertical" &&
+      (edge.fixed <= BOARD.xMin + 0.001 || edge.fixed >= BOARD.xMax - 0.001))
+  ) {
+    return false;
+  }
+
+  const midpoint = (edge.from + edge.to) / 2;
+  const probeDistances = [0.03, 0.08, 0.13];
+
+  return !probeDistances.some((distance) => {
+    const probe =
+      orientation === "horizontal"
+        ? { x: midpoint, y: edge.fixed + direction * distance }
+        : { x: edge.fixed + direction * distance, y: midpoint };
+
+    return (
+      terrain.blocks.some((block) => isPointInsideBlockRect(probe, block)) ||
+      terrain.segments.some((segment) => isPointInsideSegmentBodyForRender(probe, segment))
+    );
+  });
+}
+
+function getSortedBlockBoundaries(
+  blocks: GameState["terrain"]["blocks"],
+  axis: "x" | "y",
+) {
+  const values = blocks.flatMap((block) =>
+    axis === "x" ? [block.x, block.x + block.width] : [block.y, block.y + block.height],
+  );
+
+  return [...new Set(values.map((value) => round(value, 3)))].sort((a, b) => a - b);
+}
+
+function isPointInsideBlockRect(point: Point, block: GameState["terrain"]["blocks"][number]) {
+  return (
+    point.x > block.x - 0.001 &&
+    point.x < block.x + block.width + 0.001 &&
+    point.y > block.y - 0.001 &&
+    point.y < block.y + block.height + 0.001
+  );
+}
+
+function getGridCellKey(xIndex: number, yIndex: number) {
+  return `${xIndex},${yIndex}`;
+}
+
+function mergeTerrainEdges(edges: TerrainEdge[]) {
+  const edgesByLine = new Map<number, TerrainEdge[]>();
+
+  for (const edge of edges) {
+    const fixed = round(edge.fixed, 3);
+    const from = Math.min(edge.from, edge.to);
+    const to = Math.max(edge.from, edge.to);
+    const lineEdges = edgesByLine.get(fixed) ?? [];
+    lineEdges.push({ fixed, from, to });
+    edgesByLine.set(fixed, lineEdges);
+  }
+
+  return [...edgesByLine.entries()].flatMap(([fixed, lineEdges]) => {
+    const sorted = lineEdges.sort((a, b) => a.from - b.from);
+    const merged: TerrainEdge[] = [];
+
+    for (const edge of sorted) {
+      const last = merged[merged.length - 1];
+
+      if (last && edge.from <= last.to + 0.001) {
+        last.to = Math.max(last.to, edge.to);
+      } else {
+        merged.push({ fixed, from: edge.from, to: edge.to });
+      }
+    }
+
+    return merged;
+  });
+}
+
+function strokeSegmentEdgeIfExposed(
+  ctx: CanvasRenderingContext2D,
+  toScreen: (point: Point) => ScreenPoint,
+  terrain: GameState["terrain"],
+  segment: GameState["terrain"]["segments"][number],
+  side: "top" | "bottom",
+) {
+  const offsetY = side === "top" ? 0 : -0.5;
+  const probeOffsetY = side === "top" ? 0.08 : -0.58;
+
+  if (isSegmentEdgeTouchingBlock(terrain, segment, probeOffsetY)) {
+    return;
+  }
+
+  strokeTerrainEdge(
+    ctx,
+    toScreen({ x: segment.x1, y: segment.y1 + offsetY }),
+    toScreen({ x: segment.x2, y: segment.y2 + offsetY }),
+  );
+}
+
+function isSegmentEdgeTouchingBlock(
+  terrain: GameState["terrain"],
+  segment: GameState["terrain"]["segments"][number],
+  probeOffsetY: number,
+) {
+  return [0.25, 0.5, 0.75].some((progress) => {
+    const probe = {
+      x: segment.x1 + (segment.x2 - segment.x1) * progress,
+      y: segment.y1 + (segment.y2 - segment.y1) * progress + probeOffsetY,
+    };
+
+    return terrain.blocks.some((block) => isPointInsideBlockRect(probe, block));
+  });
 }
 
 function strokeTerrainEdge(ctx: CanvasRenderingContext2D, from: ScreenPoint, to: ScreenPoint) {
@@ -2025,40 +2244,22 @@ function isPointInsideAnyRenderedHole(point: Point, terrain: GameState["terrain"
   return terrain.holes.some((hole) => Math.hypot(point.x - hole.x, point.y - hole.y) <= hole.radius + 0.01);
 }
 
-function isHorizontalBlockEdgeShared(
-  terrain: GameState["terrain"],
-  sourceId: string,
-  x1: number,
-  x2: number,
-  y: number,
+function isPointInsideSegmentBodyForRender(
+  point: Point,
+  segment: GameState["terrain"]["segments"][number],
 ) {
-  return terrain.blocks.some((block) => {
-    if (block.id === sourceId) {
-      return false;
-    }
+  const minX = Math.min(segment.x1, segment.x2);
+  const maxX = Math.max(segment.x1, segment.x2);
 
-    const sharesY =
-      Math.abs(block.y - y) < 0.01 || Math.abs(block.y + block.height - y) < 0.01;
-    const overlap = Math.min(x2, block.x + block.width) - Math.max(x1, block.x);
+  if (point.x < minX - 0.01 || point.x > maxX + 0.01) {
+    return false;
+  }
 
-    return sharesY && overlap > 0.01;
-  }) || terrain.segments.some((segment) => {
-    const segmentMinX = Math.min(segment.x1, segment.x2);
-    const segmentMaxX = Math.max(segment.x1, segment.x2);
-    const overlapStart = Math.max(x1, segmentMinX);
-    const overlapEnd = Math.min(x2, segmentMaxX);
+  const progress =
+    Math.abs(segment.x2 - segment.x1) < 0.01 ? 0 : (point.x - segment.x1) / (segment.x2 - segment.x1);
+  const topY = segment.y1 + (segment.y2 - segment.y1) * progress;
 
-    if (overlapEnd - overlapStart <= 0.01) {
-      return false;
-    }
-
-    const midX = (overlapStart + overlapEnd) / 2;
-    const progress = Math.abs(segment.x2 - segment.x1) < 0.01 ? 0 : (midX - segment.x1) / (segment.x2 - segment.x1);
-    const topY = segment.y1 + (segment.y2 - segment.y1) * progress;
-    const bottomY = topY - 0.5;
-
-    return Math.abs(topY - y) < 0.01 || Math.abs(bottomY - y) < 0.01;
-  });
+  return point.y <= topY + 0.01 && point.y >= topY - 0.51;
 }
 
 function punchTerrainHoles(

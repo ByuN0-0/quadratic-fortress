@@ -6,6 +6,7 @@ import {
   findSupportY,
   findSupportAtX,
   findSupportYOrNull,
+  getTerrainMapLabel,
   getSegmentYAtX,
   OCEAN_FALL_Y,
   settlePlayersOnTerrain,
@@ -38,12 +39,24 @@ describe("terrain", () => {
     const map1 = createInitialTerrain("map1");
     const map2 = createInitialTerrain("map2");
     const map3 = createInitialTerrain("map3");
+    const map4 = createInitialTerrain("map4");
 
     expect(map1.blocks.map((block) => block.id)).not.toEqual(map2.blocks.map((block) => block.id));
     expect(map2.blocks.map((block) => block.id)).not.toEqual(map3.blocks.map((block) => block.id));
     expect(map1.holes).toEqual([]);
     expect(map2.holes).toEqual([]);
     expect(map3.holes).toEqual([]);
+    expect(map4.blocks.map((block) => block.id)).not.toEqual(map3.blocks.map((block) => block.id));
+    expect(map4.segments).toEqual([]);
+    expect(map4.holes).toEqual([]);
+  });
+
+  it("uses the check tile layout and label on map4", () => {
+    const map4 = createInitialTerrain("map4");
+
+    expect(getTerrainMapLabel("map4")).toBe("체크 타일");
+    expect(map4.blocks.some((block) => block.id.startsWith("map4-left"))).toBe(true);
+    expect(map4.blocks.some((block) => block.id.startsWith("map4-right"))).toBe(true);
   });
 
   it("uses block-only terrain with half-height blocks on map3", () => {

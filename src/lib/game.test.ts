@@ -266,6 +266,65 @@ describe("game reducer", () => {
     expect(moved.players[0].tankPosition).toEqual({ x: 0.1, y: 0.1 });
   });
 
+  it("allows moving off a cliff and landing on lower terrain", () => {
+    const state = {
+      ...createInitialGameState(),
+      players: [
+        {
+          ...createInitialGameState().players[0],
+          tankPosition: { x: 0.1, y: 4 },
+        },
+        {
+          ...createInitialGameState().players[1],
+          tankPosition: { x: 8, y: 0 },
+        },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+      terrain: {
+        blocks: [
+          { id: "ledge", x: -1, y: 3.5, width: 1.1, height: 0.5 },
+          { id: "floor", x: 0.1, y: 0, width: 2, height: 0.5 },
+        ] as ReturnType<typeof createInitialGameState>["terrain"]["blocks"],
+        segments: [],
+        holes: [],
+      },
+    };
+
+    const moved = moveActivePlayer(state, 1);
+
+    expect(canMoveActivePlayer(state, 1)).toBe(true);
+    expect(moved.players[0].tankPosition).toEqual({ x: 0.2, y: 0.5 });
+    expect(moved.movementUsed).toBe(0.1);
+  });
+
+  it("declares a winner when moving off a cliff into the sea", () => {
+    const state = {
+      ...createInitialGameState("ocean"),
+      players: [
+        {
+          ...createInitialGameState("ocean").players[0],
+          tankPosition: { x: 0.1, y: 4 },
+        },
+        {
+          ...createInitialGameState("ocean").players[1],
+          tankPosition: { x: 8, y: 0 },
+        },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+      terrain: {
+        blocks: [{ id: "ledge", x: -1, y: 3.5, width: 1.1, height: 0.5 }] as ReturnType<
+          typeof createInitialGameState
+        >["terrain"]["blocks"],
+        segments: [],
+        holes: [],
+      },
+    };
+
+    const moved = moveActivePlayer(state, 1);
+
+    expect(canMoveActivePlayer(state, 1)).toBe(true);
+    expect(moved.players[0].tankPosition).toEqual({ x: 0.2, y: -1 });
+    expect(moved.winnerId).toBe("p2");
+  });
+
   it("blocks movement through the wall of a circular blast hole", () => {
     const state = {
       ...createInitialGameState(),
