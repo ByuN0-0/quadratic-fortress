@@ -24,7 +24,6 @@ import {
   getActivePlayer,
   getRemainingMove,
   getShotProjectile,
-  getTargetPlayer,
   moveActivePlayer,
   prepareShot,
   type MoveDirection,
@@ -85,6 +84,10 @@ type DisplayHpByPlayer = Record<PlayerId, number>;
 type AimInputByPlayer = Record<PlayerId, ShotInput>;
 type Players = GameState["players"];
 
+function getPlayerLabel(playerId: PlayerId): string {
+  return playerId === "p1" ? "1P" : "2P";
+}
+
 export default function QuadraticFortress() {
   const [game, setGame] = useState<GameState>(() => createInitialGameState());
   const [aimInputByPlayer, setAimInputByPlayer] = useState<AimInputByPlayer>(() =>
@@ -119,8 +122,6 @@ export default function QuadraticFortress() {
     () => (visualPlayers ? { ...game, players: visualPlayers } : game),
     [game, visualPlayers],
   );
-  const activePlayer = getActivePlayer(renderGame);
-  const targetPlayer = getTargetPlayer(renderGame);
   const activeInput = aimInputByPlayer[game.activePlayerId];
   const previewShot = useMemo(() => createPreviewShot(game, activeInput), [game, activeInput]);
   const visibleShot = game.lastShot ?? previewShot;
@@ -687,16 +688,6 @@ export default function QuadraticFortress() {
 
         <section className="board-panel arena-board" aria-label="좌표평면 게임판">
           <canvas ref={canvasRef} aria-label="포물선 전장" role="img" />
-          {coordinateDisplayMode === "teacher" ? (
-            <div className="canvas-caption">
-              <span>
-                {activePlayer.name}: {formatPoint(activePlayer.tankPosition)}
-              </span>
-              <span>
-                목표 {targetPlayer.name}: {formatPoint(targetPlayer.tankPosition)}
-              </span>
-            </div>
-          ) : null}
         </section>
 
         <AimControls
@@ -723,6 +714,10 @@ export default function QuadraticFortress() {
       {isHistoryOpen ? (
         <HistoryPopover history={game.shotHistory} onClose={() => setIsHistoryOpen(false)} />
       ) : null}
+
+      {game.winnerId ? (
+        <VictoryModal game={game} winnerId={game.winnerId} onReset={reset} />
+      ) : null}
     </main>
   );
 }
@@ -737,14 +732,14 @@ function GameHud({
   players,
   winnerId,
 }: {
-  activePlayerId: string;
+  activePlayerId: PlayerId;
   displayHpByPlayer: DisplayHpByPlayer;
   mapId: TerrainMapId;
   mode: GameMode;
   onReset: () => void;
   onTutorial: () => void;
   players: GameState["players"];
-  winnerId: string | null;
+  winnerId: PlayerId | null;
 }) {
   return (
     <header className="game-hud" aria-label="게임 상태">
@@ -772,9 +767,11 @@ function GameHud({
           </div>
         ))}
       </div>
-      <div className="turn-badge" aria-live="polite">
-        {winnerId ? `${winnerId.toUpperCase()} 승리` : `${activePlayerId.toUpperCase()} 턴`}
-      </div>
+      {winnerId ? (
+        <div className="turn-badge" aria-live="polite">
+          {`${getPlayerLabel(winnerId)} 승리`}
+        </div>
+      ) : null}
       <div className="topbar-actions">
         <button
           className="icon-button"
@@ -835,7 +832,6 @@ function AimControls({
   const activePlayer = getActivePlayer(game);
   const canShowResult = Boolean(game.lastShot);
   const remainingMove = getRemainingMove(game);
-  const moveStatus = getMoveStatus(game, remainingMove, isShotAnimating);
 
   return (
     <section className="aim-console" aria-label="조준 콘솔">
@@ -899,10 +895,9 @@ function AimControls({
         </button>
       </form>
       <div className="move-console" aria-label="탱크 이동">
-        <div>
-          <p className="eyebrow">Move</p>
+        <div className="move-console-copy">
+          <p className="eyebrow">MOVE</p>
           <strong>이동 가능: {formatCoordinate(remainingMove)}칸</strong>
-          {moveStatus ? <small>{moveStatus}</small> : null}
         </div>
         <div className="move-buttons">
           <button
@@ -936,7 +931,7 @@ function AimControls({
             aria-pressed={coordinateDisplayMode === "teacher"}
             onClick={() => onCoordinateDisplayModeChange("teacher")}
           >
-            교사용
+            Easy
           </button>
           <button
             className={coordinateDisplayMode === "student" ? "is-active" : ""}
@@ -944,7 +939,7 @@ function AimControls({
             aria-pressed={coordinateDisplayMode === "student"}
             onClick={() => onCoordinateDisplayModeChange("student")}
           >
-            학생용
+            Hard
           </button>
         </div>
         <button
@@ -972,29 +967,6 @@ function AimControls({
       </div>
     </section>
   );
-}
-
-function getMoveStatus(game: GameState, remainingMove: number, isShotAnimating: boolean): string {
-  if (isShotAnimating) {
-    return "처리 중";
-  }
-
-  if (game.winnerId) {
-    return "게임 종료";
-  }
-
-  if (remainingMove <= 0) {
-    return "이동 완료";
-  }
-
-  const canMoveLeft = canMoveActivePlayer(game, -1);
-  const canMoveRight = canMoveActivePlayer(game, 1);
-
-  if (!canMoveLeft && !canMoveRight) {
-    return "이동 불가";
-  }
-
-  return "";
 }
 
 function formatPoint(point: Point): string {
@@ -1208,6 +1180,10 @@ function ResultDetailsModal({ result, onClose }: { result: ShotResult; onClose: 
             <dt>피해</dt>
             <dd>{result.damage}</dd>
           </div>
+          <div>
+            <dt>자기 피해</dt>
+            <dd>{result.shooterDamage}</dd>
+          </div>
         </dl>
         <ol className="explanation-list">
           {result.explanation.map((line) => (
@@ -1236,7 +1212,7 @@ function HistoryPopover({ history, onClose }: { history: ShotResult[]; onClose: 
                 <p className="history-projectile">{shot.projectile.name}</p>
                 <div>
                   <strong>
-                    #{shot.id} {shot.shooterId.toUpperCase()} → {shot.targetId.toUpperCase()}
+                    #{shot.id} {getPlayerLabel(shot.shooterId)} → {getPlayerLabel(shot.targetId)}
                   </strong>
                   <span>피해 {shot.damage}</span>
                 </div>
@@ -1249,6 +1225,73 @@ function HistoryPopover({ history, onClose }: { history: ShotResult[]; onClose: 
         </div>
       </section>
     </ModalFrame>
+  );
+}
+
+function VictoryModal({
+  game,
+  winnerId,
+  onReset,
+}: {
+  game: GameState;
+  winnerId: PlayerId;
+  onReset: () => void;
+}) {
+  const playerStats = game.players.map((player) => {
+    const shots = game.shotHistory.filter((shot) => shot.shooterId === player.id);
+    const hits = shots.filter((shot) => shot.damage > 0).length;
+
+    return {
+      hp: Math.round(player.hp),
+      id: player.id,
+      label: player.name,
+      hitRate: `${hits}/${shots.length}`,
+    };
+  });
+  const lastAttack = game.shotHistory[0] ?? game.lastShot;
+  const lastAttackText = lastAttack
+    ? `${lastAttack.projectile.name} · 피해 ${lastAttack.damage}`
+    : "없음";
+
+  return (
+    <div className="victory-backdrop" role="presentation">
+      <section
+        aria-label={`${getPlayerLabel(winnerId)} 승리`}
+        aria-modal="true"
+        className={`victory-panel winner-${winnerId}`}
+        role="dialog"
+      >
+        <p className="eyebrow">Game Over</p>
+        <h2>{getPlayerLabel(winnerId)} 승리!</h2>
+        <div className="victory-summary" aria-label="경기 요약">
+          <div className="victory-stat-card">
+            <span>최종 HP</span>
+            <strong>
+              {playerStats.map((stat) => `${stat.label} HP : ${stat.hp}`).join("  &  ")}
+            </strong>
+          </div>
+          <div className="victory-stat-card">
+            <span>명중률</span>
+            <strong>
+              {playerStats.map((stat) => `${stat.label} : ${stat.hitRate}`).join("  &  ")}
+            </strong>
+          </div>
+          <div className="victory-stat-card">
+            <span>결정타</span>
+            <strong>{lastAttackText}</strong>
+          </div>
+          <div className="victory-stat-card">
+            <span>모드 / 맵</span>
+            <strong>
+              {getGameModeLabel(game.mode)} - {getTerrainMapLabel(game.mapId)}
+            </strong>
+          </div>
+        </div>
+        <button className="primary-button" type="button" onClick={onReset}>
+          다시하기
+        </button>
+      </section>
+    </div>
   );
 }
 
@@ -1337,14 +1380,6 @@ function TutorialScreen({
           >
             <SkipBack size={18} />
             이전
-          </button>
-          <button
-            className="secondary-button replay-button"
-            type="button"
-            onClick={() => setAnimationKey((current) => current + 1)}
-          >
-            <RotateCcw size={18} />
-            다시 보기
           </button>
           <button className="primary-button" type="button" onClick={onNext}>
             {isLastStep ? "게임 시작" : "다음"}
@@ -1704,7 +1739,7 @@ function drawBoard(
     );
   }
 
-  drawVertex(ctx, rc, toScreen, previewShot.vertex);
+  drawVertex(ctx, rc, toScreen, previewShot.vertex, getActivePlayer(game).id);
   if (hasFiredShot) {
     drawShell(rc, toScreen, visibleShot, shotShooterPosition, animationProgress);
   }
@@ -2427,10 +2462,17 @@ function drawTank(
     strokeWidth: 5,
     roughness: 1,
   });
+  ctx.save();
   ctx.fillStyle = "#232629";
   ctx.font = "700 13px ui-sans-serif, system-ui";
-  ctx.fillText(id.toUpperCase(), screen.x - 10, screen.y - 30);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(player.name, screen.x, screen.y - 30);
+  ctx.restore();
   drawTankHpBar(ctx, screen, displayHp);
+  if (isActive) {
+    drawTankTurnPointer(ctx, screen);
+  }
 }
 
 function drawTankHpBar(ctx: CanvasRenderingContext2D, screen: ScreenPoint, displayHp: number) {
@@ -2451,11 +2493,25 @@ function drawTankHpBar(ctx: CanvasRenderingContext2D, screen: ScreenPoint, displ
   ctx.restore();
 }
 
+function drawTankTurnPointer(ctx: CanvasRenderingContext2D, screen: ScreenPoint) {
+  ctx.save();
+  ctx.font = "900 22px ui-sans-serif, system-ui";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = "#ffffff";
+  ctx.fillStyle = "#111827";
+  ctx.strokeText("▼", screen.x, screen.y - 48);
+  ctx.fillText("▼", screen.x, screen.y - 48);
+  ctx.restore();
+}
+
 function drawVertex(
   ctx: CanvasRenderingContext2D,
   rc: ReturnType<typeof rough.canvas>,
   toScreen: (point: Point) => ScreenPoint,
   vertex: Point,
+  activePlayerId: PlayerId,
 ) {
   if (!Number.isFinite(vertex.x) || !Number.isFinite(vertex.y)) {
     return;
@@ -2468,9 +2524,16 @@ function drawVertex(
     fillStyle: "solid",
     strokeWidth: 2,
   });
-  ctx.fillStyle = "#7c2d12";
-  ctx.font = "700 12px ui-sans-serif, system-ui";
-  ctx.fillText("max", screen.x + 10, screen.y - 10);
+  const label = activePlayerId === "p1" ? "1P TURN" : "2P TURN";
+  ctx.save();
+  ctx.fillStyle = activePlayerId === "p1" ? "#dc2626" : "#2563eb";
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 4;
+  ctx.font = "900 16px ui-sans-serif, system-ui";
+  ctx.textBaseline = "middle";
+  ctx.strokeText(label, screen.x + 12, screen.y - 12);
+  ctx.fillText(label, screen.x + 12, screen.y - 12);
+  ctx.restore();
 }
 
 function drawBlast(

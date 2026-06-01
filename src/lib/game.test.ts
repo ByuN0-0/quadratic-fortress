@@ -70,6 +70,30 @@ describe("game reducer", () => {
     expect(next.shotHistory[0].damage).toBe(35);
   });
 
+  it("applies the same blast damage to the shooter when inside the explosion radius", () => {
+    const state = {
+      ...createFlatShotState(),
+      players: [
+        { ...createFlatShotState().players[0], tankPosition: { x: -8, y: 0 } },
+        { ...createFlatShotState().players[1], tankPosition: { x: 8, y: 0 } },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+      terrain: {
+        blocks: [
+          { id: "near-shooter", x: -7.4, y: 0.7, width: 0.5, height: 0.5 },
+        ],
+        segments: [] as ReturnType<typeof createInitialGameState>["terrain"]["segments"],
+        holes: [],
+      },
+    };
+
+    const next = submitShot(state, { vertexX: 0, vertexY: 6, projectileType: "wide" });
+
+    expect(next.players[0].hp).toBeLessThan(100);
+    expect(next.players[1].hp).toBe(100);
+    expect(next.shotHistory[0].shooterDamage).toBeGreaterThan(0);
+    expect(next.shotHistory[0].damage).toBe(0);
+  });
+
   it("explodes on air terrain before reaching the ground impact", () => {
     const state = {
       ...createInitialGameState(),
@@ -452,7 +476,9 @@ describe("game reducer", () => {
         quadratic: { a: -0.1, h: 0, k: 6 },
         impactPoint: { x: -8, y: 2.25 },
         distanceToTarget: 0,
+        distanceToShooter: 16,
         damage: 0,
+        shooterDamage: 0,
         isValidImpact: true,
         validationErrors: [],
         explanation: [],

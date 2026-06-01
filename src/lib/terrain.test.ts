@@ -10,6 +10,7 @@ import {
   getSegmentYAtX,
   OCEAN_FALL_Y,
   settlePlayersOnTerrain,
+  TERRAIN_MAP_IDS,
   type TerrainBlock,
   type TerrainSegment,
 } from "./terrain";
@@ -40,9 +41,13 @@ describe("terrain", () => {
     const map2 = createInitialTerrain("map2");
     const map3 = createInitialTerrain("map3");
     const map4 = createInitialTerrain("map4");
+    const map5 = createInitialTerrain("map5");
+    const map8 = createInitialTerrain("map8");
 
     expect(map1.blocks.map((block) => block.id)).not.toEqual(map2.blocks.map((block) => block.id));
     expect(map2.blocks.map((block) => block.id)).not.toEqual(map3.blocks.map((block) => block.id));
+    expect(map5.blocks.map((block) => block.id)).not.toEqual(map8.blocks.map((block) => block.id));
+    expect(TERRAIN_MAP_IDS).toEqual(["map1", "map2", "map5", "map6", "map7", "map8", "map3", "map4"]);
     expect(map1.holes).toEqual([]);
     expect(map2.holes).toEqual([]);
     expect(map3.holes).toEqual([]);
@@ -57,6 +62,24 @@ describe("terrain", () => {
     expect(getTerrainMapLabel("map4")).toBe("체크 타일");
     expect(map4.blocks.some((block) => block.id.startsWith("map4-left"))).toBe(true);
     expect(map4.blocks.some((block) => block.id.startsWith("map4-right"))).toBe(true);
+  });
+
+  it("adds class maps for grades 3 through 6", () => {
+    expect(getTerrainMapLabel("map5")).toBe("3학년 3반");
+    expect(getTerrainMapLabel("map6")).toBe("3학년 4반");
+    expect(getTerrainMapLabel("map7")).toBe("3학년 5반");
+    expect(getTerrainMapLabel("map8")).toBe("3학년 6반");
+
+    expect(createInitialTerrain("map5").blocks.some((block) => block.id.startsWith("map5-class"))).toBe(true);
+    expect(createInitialTerrain("map8").blocks.some((block) => block.id.startsWith("map8-class"))).toBe(true);
+  });
+
+  it("uses block pieces for the 3학년 4반 digit", () => {
+    const map6 = createInitialTerrain("map6");
+
+    expect(map6.segments.some((segment) => segment.id.includes("class-diagonal"))).toBe(false);
+    expect(map6.blocks.some((block) => block.id === "map6-class-0-3")).toBe(true);
+    expect(map6.blocks.some((block) => block.id === "map6-class-2-0")).toBe(true);
   });
 
   it("uses block-only terrain with half-height blocks on map3", () => {

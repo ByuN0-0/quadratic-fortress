@@ -1,7 +1,9 @@
 import {
   BOARD,
   STARTING_HP,
+  calculateDamage,
   calculateShotMath,
+  distance,
   formatCoordinate,
   formatEquation,
   getProjectileConfig,
@@ -53,7 +55,9 @@ export type ShotResult = {
   quadratic: Quadratic;
   impactPoint: Point;
   distanceToTarget: number;
+  distanceToShooter: number;
   damage: number;
+  shooterDamage: number;
   isValidImpact: boolean;
   validationErrors: string[];
   explanation: string[];
@@ -172,6 +176,10 @@ export function prepareShot(state: GameState, input: ShotInput): GameState {
     targetId: target.id,
     vertex,
     ...math,
+    distanceToShooter: math.isValidImpact ? distance(math.impactPoint, shooter.tankPosition) : 0,
+    shooterDamage: math.isValidImpact
+      ? calculateDamage(distance(math.impactPoint, shooter.tankPosition), math.projectile)
+      : 0,
     explanation: buildExplanation(shooter, target, vertex, math),
     isApplied: false,
     terrainImpactBlockId: terrainImpact?.blockId ?? null,
@@ -203,17 +211,16 @@ export function applyLastShot(state: GameState): GameState {
   };
 
   const damagedPlayers = state.players.map((player) => {
-    if (player.id !== result.targetId) {
-      return {
-        ...player,
-        isActive: player.id !== result.shooterId,
-      };
-    }
-
+    const damage =
+      player.id === result.targetId
+        ? result.damage
+        : player.id === result.shooterId
+          ? result.shooterDamage
+          : 0;
     return {
       ...player,
-      hp: Math.max(0, player.hp - result.damage),
-      isActive: true,
+      hp: Math.max(0, player.hp - damage),
+      isActive: player.id !== result.shooterId,
     };
   }) as [Player, Player];
   const nextTerrain = result.isValidImpact
@@ -230,11 +237,14 @@ export function applyLastShot(state: GameState): GameState {
       ) as [Player, Player]
     : nextPlayers;
 
+  const defeatedPlayers = resolvedPlayers.filter((player) => player.hp <= 0);
   const winnerId = fallenPlayer
     ? getOpponentId(fallenPlayer.id)
-    : resolvedPlayers.find((player) => player.hp <= 0)
-      ? result.shooterId
-      : null;
+    : defeatedPlayers.length === 1
+      ? getOpponentId(defeatedPlayers[0].id)
+      : defeatedPlayers.length > 1
+        ? result.targetId
+        : null;
 
   if (winnerId) {
     return {
@@ -357,6 +367,11 @@ function buildExplanation(
 
   const a = round(result.quadratic.a, 3);
   const distanceToTarget = formatCoordinate(result.distanceToTarget);
+  const rawDistanceToShooter = distance(result.impactPoint, shooter.tankPosition);
+  const distanceToShooter = formatCoordinate(rawDistanceToShooter);
+  const shooterDamage = result.isValidImpact
+    ? calculateDamage(rawDistanceToShooter, result.projectile)
+    : 0;
   const impactX = formatCoordinate(result.impactPoint.x);
   const impactY = formatCoordinate(result.impactPoint.y);
   const blastRadius = result.projectile.blastRadius;
@@ -374,6 +389,7 @@ function buildExplanation(
     `지면과 다시 만나는 착탄점은 (${impactX}, ${impactY}) 입니다.`,
     `폭발 범위는 (x - ${impactX})² + (y - ${impactY})² ≤ ${BLAST_RADIUS ** 2} 입니다.`,
     `${target.name} 중심까지 거리는 ${distanceToTarget}이고, 피해는 round(${MAX_DAMAGE} × (1 - ${distanceToTarget} / ${BLAST_RADIUS})) = ${result.damage} 입니다.`,
+    `${shooter.name} 중심까지 거리는 ${distanceToShooter}이고, 자기 폭발 피해는 round(${MAX_DAMAGE} × (1 - ${distanceToShooter} / ${BLAST_RADIUS})) = ${shooterDamage} 입니다.`,
     validity,
   ];
 }
@@ -418,6 +434,10 @@ export function createPreviewShot(state: GameState, input: ShotInput): ShotResul
     targetId: target.id,
     vertex,
     ...math,
+    distanceToShooter: math.isValidImpact ? distance(math.impactPoint, shooter.tankPosition) : 0,
+    shooterDamage: math.isValidImpact
+      ? calculateDamage(distance(math.impactPoint, shooter.tankPosition), math.projectile)
+      : 0,
     explanation: buildExplanation(shooter, target, vertex, math),
     isApplied: false,
     terrainImpactBlockId: terrainImpact?.blockId ?? null,

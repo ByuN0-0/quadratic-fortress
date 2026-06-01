@@ -32,7 +32,7 @@ export type TerrainState = {
   holes: TerrainHole[];
 };
 
-export type TerrainMapId = "map1" | "map2" | "map3" | "map4";
+export type TerrainMapId = "map1" | "map2" | "map3" | "map4" | "map5" | "map6" | "map7" | "map8";
 
 export type TerrainHole = {
   id: string;
@@ -44,7 +44,16 @@ export type TerrainHole = {
 export const AIR_TERRAIN_HEIGHT = 0.5;
 export const SUPPORT_TOLERANCE = 0.08;
 export const OCEAN_FALL_Y = -1;
-export const TERRAIN_MAP_IDS: TerrainMapId[] = ["map1", "map2", "map3", "map4"];
+export const TERRAIN_MAP_IDS: TerrainMapId[] = [
+  "map1",
+  "map2",
+  "map5",
+  "map6",
+  "map7",
+  "map8",
+  "map3",
+  "map4",
+];
 
 const INITIAL_TERRAIN_BY_MAP: Record<
   TerrainMapId,
@@ -82,6 +91,10 @@ const INITIAL_TERRAIN_BY_MAP: Record<
       { id: "map2-slope-down-right", x1: 1.5, y1: 4.5, x2: 6.8, y2: 2.5 },
     ],
   },
+  map5: createClassMapTerrain("map5", 3),
+  map6: createClassMapTerrain("map6", 4),
+  map7: createClassMapTerrain("map7", 5),
+  map8: createClassMapTerrain("map8", 6),
   map3: {
     blocks: createMapThreeBlocks(),
     segments: [],
@@ -91,6 +104,44 @@ const INITIAL_TERRAIN_BY_MAP: Record<
     segments: [],
   },
 };
+
+function createClassMapTerrain(
+  prefix: string,
+  classDigit: 3 | 4 | 5 | 6,
+): { blocks: TerrainBlock[]; segments: TerrainSegment[] } {
+  return {
+    blocks: [
+      { id: `${prefix}-left`, x: -9.2, y: 2, width: 2.4, height: AIR_TERRAIN_HEIGHT },
+      { id: `${prefix}-center`, x: -1.5, y: 4, width: 3, height: AIR_TERRAIN_HEIGHT },
+      { id: `${prefix}-right`, x: 6.8, y: 2, width: 2.4, height: AIR_TERRAIN_HEIGHT },
+      ...createLowerFoundationBlocks(`${prefix}-foundation`),
+      ...createDigitThreeBlocks(`${prefix}-grade`, -5, 5),
+      ...createClassDigitBlocks(`${prefix}-class`, 2, 5, classDigit),
+      { id: `${prefix}-middle-mark-left`, x: -1, y: 7, width: 1, height: 1 },
+      { id: `${prefix}-middle-mark-right`, x: 0, y: 7, width: 1, height: 1 },
+    ],
+    segments: [
+      { id: `${prefix}-slope-up-left`, x1: -6.8, y1: 2.5, x2: -1.5, y2: 4.5 },
+      { id: `${prefix}-slope-down-right`, x1: 1.5, y1: 4.5, x2: 6.8, y2: 2.5 },
+    ],
+  };
+}
+
+function createClassDigitBlocks(prefix: string, x: number, y: number, digit: 3 | 4 | 5 | 6): TerrainBlock[] {
+  if (digit === 3) {
+    return createDigitThreeBlocks(prefix, x, y);
+  }
+
+  if (digit === 4) {
+    return createDigitFourBlocks(prefix, x, y);
+  }
+
+  if (digit === 5) {
+    return createDigitFiveBlocks(prefix, x, y);
+  }
+
+  return createDigitSixBlocks(prefix, x, y);
+}
 
 function createDigitThreeBlocks(prefix: string, x: number, y: number): TerrainBlock[] {
   return createDigitBlocks(prefix, x, y, [
@@ -118,6 +169,53 @@ function createDigitTwoBlocks(prefix: string, x: number, y: number): TerrainBloc
     [1, 2],
     [2, 2],
     [2, 3],
+    [0, 4],
+    [1, 4],
+    [2, 4],
+  ]);
+}
+
+function createDigitFourBlocks(prefix: string, x: number, y: number): TerrainBlock[] {
+  return createDigitBlocks(prefix, x, y, [
+    [0, 4],
+    [0, 2],
+    [0, 3],
+    [1, 2],
+    [2, 0],
+    [2, 1],
+    [2, 2],
+    [2, 3],
+    [2, 4],
+  ]);
+}
+
+function createDigitFiveBlocks(prefix: string, x: number, y: number): TerrainBlock[] {
+  return createDigitBlocks(prefix, x, y, [
+    [0, 0],
+    [1, 0],
+    [2, 0],
+    [2, 1],
+    [0, 2],
+    [1, 2],
+    [2, 2],
+    [0, 3],
+    [0, 4],
+    [1, 4],
+    [2, 4],
+  ]);
+}
+
+function createDigitSixBlocks(prefix: string, x: number, y: number): TerrainBlock[] {
+  return createDigitBlocks(prefix, x, y, [
+    [0, 0],
+    [1, 0],
+    [2, 0],
+    [0, 1],
+    [2, 1],
+    [0, 2],
+    [1, 2],
+    [2, 2],
+    [0, 3],
     [0, 4],
     [1, 4],
     [2, 4],
@@ -243,6 +341,10 @@ export function getTerrainMapLabel(mapId: TerrainMapId): string {
   const labels: Record<TerrainMapId, string> = {
     map1: "3학년 1반",
     map2: "3학년 2반",
+    map5: "3학년 3반",
+    map6: "3학년 4반",
+    map7: "3학년 5반",
+    map8: "3학년 6반",
     map3: "열쇠",
     map4: "체크 타일",
   };
