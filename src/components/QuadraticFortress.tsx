@@ -43,10 +43,13 @@ import {
   type ShotResult,
 } from "../lib/game";
 import {
+  TERRAIN_COLUMN_STEP,
   TERRAIN_MAP_IDS,
   getTerrainMapLabel,
+  type TerrainColumnSegment,
   type TerrainMapId,
 } from "../lib/terrain";
+import { buildColumnRenderShapes, type ColumnRenderShape } from "../lib/terrainRender";
 import {
   BLAST_RADIUS,
   BOARD,
@@ -2120,6 +2123,16 @@ function drawTerrain(
 
   layerCtx.setTransform(ctx.getTransform());
 
+  if (terrain.columns) {
+    fillColumnTerrain(layerCtx, toScreen, terrain.columns);
+    strokeColumnTerrainOutline(layerCtx, toScreen, terrain.columns);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(terrainLayer, 0, 0);
+    ctx.restore();
+    return;
+  }
+
   fillBlockTerrain(layerCtx, toScreen, terrain.blocks);
 
   for (const segment of terrain.segments) {
@@ -2172,6 +2185,195 @@ function fillBlockTerrain(
   ctx.fillStyle = "rgba(180, 83, 9, 0.18)";
   ctx.fill();
   ctx.restore();
+}
+
+function fillColumnTerrain(
+  ctx: CanvasRenderingContext2D,
+  toScreen: (point: Point) => ScreenPoint,
+  columns: NonNullable<GameState["terrain"]["columns"]>,
+) {
+  const shapes = buildColumnRenderShapes(columns);
+
+  ctx.save();
+  ctx.beginPath();
+
+  for (const shape of shapes) {
+    addColumnRenderShapePath(ctx, toScreen, shape);
+  }
+
+  ctx.fillStyle = "#fde68a";
+  ctx.fill();
+  ctx.fillStyle = "rgba(180, 83, 9, 0.18)";
+  ctx.fill();
+  ctx.restore();
+}
+
+function strokeColumnTerrainOutline(
+  ctx: CanvasRenderingContext2D,
+  toScreen: (point: Point) => ScreenPoint,
+  columns: NonNullable<GameState["terrain"]["columns"]>,
+) {
+  ctx.save();
+  ctx.strokeStyle = "#202124";
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "butt";
+  clipToBoard(ctx, toScreen);
+
+  drawExposedColumnTerrainEdges(ctx, toScreen, columns);
+
+  ctx.restore();
+}
+
+function drawExposedColumnTerrainEdges(
+  ctx: CanvasRenderingContext2D,
+  toScreen: (point: Point) => ScreenPoint,
+  columns: NonNullable<GameState["terrain"]["columns"]>,
+) {
+  ctx.beginPath();
+
+  for (const [index, segments] of columns.entries()) {
+    for (const segment of segments) {
+      const leftX = getColumnLeftX(index);
+      const rightX = getColumnRightX(index);
+
+      if (!hasTouchingSegmentAtY(segments, segment.topY, segment, "above")) {
+        moveLineTo(ctx, toScreen, { x: leftX, y: segment.topY }, { x: rightX, y: segment.topY });
+      }
+
+      if (!hasTouchingSegmentAtY(segments, segment.bottomY, segment, "below")) {
+        moveLineTo(ctx, toScreen, { x: leftX, y: segment.bottomY }, { x: rightX, y: segment.bottomY });
+      }
+
+      for (const interval of subtractCoveredIntervals(
+        [[segment.bottomY, segment.topY]],
+        columns.get(index - 1) ?? [],
+      )) {
+        moveLineTo(ctx, toScreen, { x: leftX, y: interval[0] }, { x: leftX, y: interval[1] });
+      }
+
+      for (const interval of subtractCoveredIntervals(
+        [[segment.bottomY, segment.topY]],
+        columns.get(index + 1) ?? [],
+      )) {
+        moveLineTo(ctx, toScreen, { x: rightX, y: interval[0] }, { x: rightX, y: interval[1] });
+      }
+    }
+  }
+
+  ctx.stroke();
+}
+
+function moveLineTo(
+  ctx: CanvasRenderingContext2D,
+  toScreen: (point: Point) => ScreenPoint,
+  from: Point,
+  to: Point,
+) {
+  const fromScreen = toScreen(from);
+  const toScreenPoint = toScreen(to);
+  ctx.moveTo(fromScreen.x, fromScreen.y);
+  ctx.lineTo(toScreenPoint.x, toScreenPoint.y);
+}
+
+function hasTouchingSegmentAtY(
+  segments: TerrainColumnSegment[],
+  y: number,
+  source: TerrainColumnSegment,
+  direction: "above" | "below",
+) {
+  return segments.some((segment) => {
+    if (segment === source) {
+      return false;
+    }
+
+    return direction === "above"
+      ? Math.abs(segment.bottomY - y) < 0.001
+      : Math.abs(segment.topY - y) < 0.001;
+  });
+}
+
+function subtractCoveredIntervals(
+  intervals: Array<[number, number]>,
+  coveringSegments: TerrainColumnSegment[],
+): Array<[number, number]> {
+  return coveringSegments.reduce(
+    (remaining, segment) => subtractInterval(remaining, [segment.bottomY, segment.topY]),
+    intervals,
+  );
+}
+
+function subtractInterval(
+  intervals: Array<[number, number]>,
+  cover: [number, number],
+): Array<[number, number]> {
+  const [coverBottom, coverTop] = cover;
+
+  return intervals.flatMap(([bottom, top]) => {
+    if (coverTop <= bottom + 0.001 || coverBottom >= top - 0.001) {
+      return [[bottom, top] as [number, number]];
+    }
+
+    const pieces: Array<[number, number]> = [];
+    const lowerTop = Math.min(top, coverBottom);
+    const upperBottom = Math.max(bottom, coverTop);
+
+    if (lowerTop > bottom + 0.001) {
+      pieces.push([bottom, lowerTop]);
+    }
+
+    if (top > upperBottom + 0.001) {
+      pieces.push([upperBottom, top]);
+    }
+
+    return pieces;
+  });
+}
+
+function addColumnRenderShapePath(
+  ctx: CanvasRenderingContext2D,
+  toScreen: (point: Point) => ScreenPoint,
+  shape: ColumnRenderShape,
+) {
+  const slices = shape.slices;
+
+  if (slices.length === 0) {
+    return;
+  }
+
+  const first = slices[0];
+  const last = slices[slices.length - 1];
+
+  ctx.moveTo(
+    toScreen({ x: getColumnLeftX(first.index), y: first.segment.topY }).x,
+    toScreen({ x: getColumnLeftX(first.index), y: first.segment.topY }).y,
+  );
+
+  for (const slice of slices) {
+    const point = toScreen({ x: getColumnLeftX(slice.index), y: slice.segment.topY });
+    ctx.lineTo(point.x, point.y);
+  }
+
+  const lastTopRight = toScreen({ x: getColumnRightX(last.index), y: last.segment.topY });
+  ctx.lineTo(lastTopRight.x, lastTopRight.y);
+
+  const lastBottomRight = toScreen({ x: getColumnRightX(last.index), y: last.segment.bottomY });
+  ctx.lineTo(lastBottomRight.x, lastBottomRight.y);
+
+  for (const slice of [...slices].reverse()) {
+    const point = toScreen({ x: getColumnLeftX(slice.index), y: slice.segment.bottomY });
+    ctx.lineTo(point.x, point.y);
+  }
+
+  ctx.closePath();
+}
+
+function getColumnLeftX(index: number) {
+  return round(BOARD.xMin + index * TERRAIN_COLUMN_STEP, 2);
+}
+
+function getColumnRightX(index: number) {
+  return round(BOARD.xMin + (index + 1) * TERRAIN_COLUMN_STEP, 2);
 }
 
 function fillTerrainPolygon(ctx: CanvasRenderingContext2D, points: ScreenPoint[], useTerrainColor = true) {

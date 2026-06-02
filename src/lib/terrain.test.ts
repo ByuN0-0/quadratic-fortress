@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildTerrainColumnMap,
   createInitialTerrain,
   destroyTerrain,
+  destroyTerrainColumns,
+  findDestructibleSegmentsInsideBlast,
+  findColumnSupportAtX,
   findProjectileTerrainImpact,
   findSupportY,
   findSupportAtX,
@@ -11,7 +15,9 @@ import {
   OCEAN_FALL_Y,
   settlePlayersOnTerrain,
   TERRAIN_MAP_IDS,
+  terrainColumnIndex,
   type TerrainBlock,
+  type TerrainColumnMap,
   type TerrainSegment,
 } from "./terrain";
 import { calculateQuadratic } from "./math";
@@ -31,7 +37,8 @@ describe("terrain", () => {
       blocks,
     );
 
-    expect(hit?.blockId).toBe("platform");
+    expect(hit?.blockId).toBe("terrain-column");
+    expect(hit?.collisionType).toBe("terrain");
     expect(hit?.point.x).toBeGreaterThanOrEqual(-4.3);
     expect(hit?.point.x).toBeLessThanOrEqual(-3.5);
   });
@@ -91,6 +98,138 @@ describe("terrain", () => {
     expect(map3.blocks.some((block) => block.id.startsWith("map3-right-base"))).toBe(true);
   });
 
+
+  it("keeps only the lowest class-map safety layer non-destructible", () => {
+    const classMapIds = ["map1", "map2", "map5", "map6", "map7", "map8"] as const;
+
+    for (const mapId of classMapIds) {
+      const columns = buildTerrainColumnMap(createInitialTerrain(mapId));
+      const leftStartColumn = columns.get(terrainColumnIndex(-8));
+      const rightStartColumn = columns.get(terrainColumnIndex(8));
+      const leftSideColumn = columns.get(terrainColumnIndex(-9.5));
+      const centerColumn = columns.get(terrainColumnIndex(0));
+
+      expect(leftStartColumn?.some((segment) => segment.topY === 2.5 && segment.destructible)).toBe(true);
+      expect(rightStartColumn?.some((segment) => segment.topY === 2.5 && segment.destructible)).toBe(true);
+      expect(leftSideColumn?.some((segment) => segment.topY === 2.9 && segment.destructible)).toBe(true);
+      expect(centerColumn?.some((segment) => segment.topY === 3.4 && segment.destructible)).toBe(true);
+      expect(centerColumn?.some((segment) => segment.bottomY === 0 && segment.topY === 0.5 && !segment.destructible)).toBe(true);
+      expect(centerColumn?.some((segment) => segment.bottomY === 0.5 && segment.topY === 2 && segment.destructible)).toBe(true);
+    }
+  });
+
+  it("can create class maps without the non-destructible safety layer", () => {
+    const classMapIds = ["map1", "map2", "map5", "map6", "map7", "map8"] as const;
+
+    for (const mapId of classMapIds) {
+      const normalTerrain = createInitialTerrain(mapId);
+      const oceanTerrain = createInitialTerrain(mapId, { includeSafeBase: false });
+
+      expect(normalTerrain.blocks.some((block) => block.id.endsWith("-safe-base") && block.isFoundation)).toBe(true);
+      expect(oceanTerrain.blocks.some((block) => block.id.endsWith("-safe-base"))).toBe(false);
+      expect(oceanTerrain.blocks.some((block) => block.id.endsWith("-playable-base") && !block.isFoundation)).toBe(true);
+    }
+  });
+
+  it("destroys class-map playable ground inside a tank-centered blast while keeping the safety layer", () => {
+    const classMapIds = ["map1", "map2", "map5", "map6", "map7", "map8"] as const;
+
+    for (const mapId of classMapIds) {
+      const center = { x: 8, y: 2.5 };
+      const radius = 1;
+      const next = destroyTerrain(createInitialTerrain(mapId), center, radius);
+      const columns = buildTerrainColumnMap(next);
+      const impactColumn = columns.get(terrainColumnIndex(center.x));
+
+      expect(findDestructibleSegmentsInsideBlast(columns, center, radius)).toEqual([]);
+      expect(impactColumn?.some((segment) => segment.bottomY === 0 && segment.topY === 0.5 && !segment.destructible)).toBe(true);
+      expect(impactColumn?.some((segment) => segment.destructible && segment.topY > 1.5 && segment.bottomY < 2)).toBe(false);
+    }
+  });
+
+  it("keeps check tile terrain destructible inside a blast", () => {
+    const center = { x: -8, y: 8 };
+    const radius = 1;
+    const next = destroyTerrain(createInitialTerrain("map4"), center, radius);
+
+    expect(findDestructibleSegmentsInsideBlast(buildTerrainColumnMap(next), center, radius)).toEqual([]);
+  });
+
+  it("builds multiple vertical terrain intervals in a single x column", () => {
+    const columns = buildTerrainColumnMap({
+      blocks: [
+        { id: "floor", x: -1, y: 0, width: 2, height: 1, isFoundation: true },
+        { id: "platform", x: -1, y: 4, width: 2, height: 0.5 },
+      ],
+      segments: [],
+      holes: [],
+    });
+
+    const highSupport = findColumnSupportAtX(columns, 0, 10);
+    const lowSupport = findColumnSupportAtX(columns, 0, 2);
+
+    expect(highSupport?.topY).toBe(4.5);
+    expect(lowSupport?.topY).toBe(1);
+  });
+
+  it("subtracts circular holes from terrain columns for movement support", () => {
+    const columns = buildTerrainColumnMap({
+      blocks: [{ id: "base", x: -10, y: 0, width: 20, height: 2 }],
+      segments: [],
+      holes: [{ id: "blast", x: 8, y: 2, radius: 1 }],
+    });
+    const support = findColumnSupportAtX(columns, 7.5, 3);
+
+    expect(support?.topY).toBeCloseTo(1.13);
+    expect(support?.topKind).toBe("hole");
+  });
+
+  it("splits a destructible column segment when a blast cuts through the middle", () => {
+    const columns: TerrainColumnMap = new Map([
+      [
+        1000,
+        [
+          {
+            topY: 5,
+            bottomY: 0,
+            type: "block",
+            destructible: true,
+            topKind: "flat",
+          },
+        ],
+      ],
+    ]);
+
+    const next = destroyTerrainColumns(columns, { x: 0, y: 2.5 }, 0.5);
+    const column = next.get(1000);
+
+    expect(column).toEqual([
+      { topY: 5, bottomY: 3, type: "block", destructible: true, topKind: "flat" },
+      { topY: 2, bottomY: 0, type: "block", destructible: true, topKind: "hole" },
+    ]);
+  });
+
+  it("keeps non-destructible column segments after a blast", () => {
+    const columns: TerrainColumnMap = new Map([
+      [
+        1000,
+        [
+          {
+            topY: 2,
+            bottomY: 0,
+            type: "foundation",
+            destructible: false,
+            topKind: "flat",
+          },
+        ],
+      ],
+    ]);
+
+    const next = destroyTerrainColumns(columns, { x: 0, y: 1 }, 1);
+
+    expect(next.get(1000)).toEqual(columns.get(1000));
+  });
+
   it("ignores terrain too close to the projectile launch point", () => {
     const quadratic = calculateQuadratic({ x: -8, y: 2.5 }, { x: 0, y: 6 });
     const terrain = {
@@ -110,7 +249,45 @@ describe("terrain", () => {
     expect(hit).toBeNull();
   });
 
-  it("detects projectile hits inside the thickness of sloped terrain", () => {
+
+  it("does not return terrain impacts inside the launch safety distance", () => {
+    const quadratic = calculateQuadratic({ x: -8, y: 2.5 }, { x: 0, y: 6 });
+    const terrain = {
+      blocks: [{ id: "launch-platform", x: -8.2, y: 2, width: 0.6, height: 0.5 }],
+      segments: [],
+      holes: [],
+    };
+
+    const hit = findProjectileTerrainImpact(
+      { x: -8, y: 2.5 },
+      quadratic,
+      { x: 8, y: 0 },
+      terrain,
+      0.7,
+    );
+
+    expect(hit).toBeNull();
+  });
+
+  it("detects terrain impacts after the launch safety distance", () => {
+    const quadratic = calculateQuadratic({ x: -8, y: 2.5 }, { x: 0, y: 6 });
+    const terrain = {
+      blocks: [{ id: "far-platform", x: -4.4, y: 4.8, width: 1, height: 0.5 }],
+      segments: [],
+      holes: [],
+    };
+
+    const hit = findProjectileTerrainImpact(
+      { x: -8, y: 2.5 },
+      quadratic,
+      { x: 8, y: 0 },
+      terrain,
+      0.7,
+    );
+
+    expect(hit?.collisionType).toBe("terrain");
+    expect(hit?.point.x).toBeGreaterThan(-5);
+  });  it("detects projectile hits inside the thickness of sloped terrain", () => {
     const terrain = {
       blocks: [],
       segments: [{ id: "slope", x1: 4, y1: 3, x2: 8, y2: 2 }],
@@ -120,7 +297,8 @@ describe("terrain", () => {
 
     const hit = findProjectileTerrainImpact({ x: 8, y: 2.5 }, quadratic, { x: 5.8, y: 2.55 }, terrain);
 
-    expect(hit?.blockId).toBe("slope");
+    expect(hit?.blockId).toBe("terrain-column");
+    expect(hit?.collisionType).toBe("terrain");
     expect(hit?.point.x).toBeGreaterThan(6);
   });
 
@@ -140,7 +318,8 @@ describe("terrain", () => {
       0.7,
     );
 
-    expect(hit?.blockId).toBe("base");
+    expect(hit?.blockId).toBe("terrain-column");
+    expect(hit?.collisionType).toBe("terrain");
     expect(hit?.point.y).toBeGreaterThan(1.4);
   });
 

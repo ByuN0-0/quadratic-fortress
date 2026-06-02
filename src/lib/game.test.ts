@@ -19,6 +19,7 @@ import {
   submitShot,
 } from "./game";
 import { getProjectileConfig } from "./math";
+import { buildTerrainColumnMap, terrainColumnIndex } from "./terrain";
 
 function createFlatShotState(): ReturnType<typeof createInitialGameState> {
   const state = createInitialGameState();
@@ -34,6 +35,37 @@ function createFlatShotState(): ReturnType<typeof createInitialGameState> {
       segments: [],
       holes: [],
     },
+  };
+}
+
+function createAppliedTerrainBlast(
+  state: ReturnType<typeof createInitialGameState>,
+  impactPoint: { x: number; y: number },
+  blastRadius: number,
+): NonNullable<ReturnType<typeof createInitialGameState>["lastShot"]> {
+  const projectile = {
+    ...getProjectileConfig("normal"),
+    blastRadius,
+  } as ReturnType<typeof getProjectileConfig>;
+
+  return {
+    id: state.shotHistory.length + 1,
+    shooterId: "p1",
+    targetId: "p2",
+    projectile,
+    vertex: { x: 0, y: 6 },
+    quadratic: { a: 0, h: 0, k: 6 },
+    impactPoint,
+    distanceToTarget: 0,
+    distanceToShooter: 0,
+    damage: 0,
+    shooterDamage: 0,
+    isValidImpact: true,
+    validationErrors: [],
+    explanation: [],
+    isApplied: false,
+    terrainImpactBlockId: "terrain-column",
+    collisionType: "terrain",
   };
 }
 
@@ -63,6 +95,21 @@ describe("game reducer", () => {
     ]);
   });
 
+  it("creates terrain columns at game start", () => {
+    expect(createInitialGameState().terrain.columns).toBeDefined();
+    expect(createInitialGameState("ocean", "map2").terrain.columns).toBeDefined();
+    expect(createPracticeGameState(1).terrain.columns).toBeDefined();
+  });
+
+  it("removes class-map safe-base terrain in ocean mode", () => {
+    const normalState = createInitialGameState("normal", "map1");
+    const oceanState = createInitialGameState("ocean", "map1");
+
+    expect(normalState.terrain.blocks.some((block) => block.id.endsWith("-safe-base") && block.isFoundation)).toBe(true);
+    expect(oceanState.terrain.blocks.some((block) => block.id.endsWith("-safe-base"))).toBe(false);
+    expect(oceanState.terrain.blocks.some((block) => block.id.endsWith("-playable-base"))).toBe(true);
+  });
+
   it("stores the selected terrain map", () => {
     const state = createInitialGameState("normal", "map2");
 
@@ -75,6 +122,28 @@ describe("game reducer", () => {
 
     expect(state.players[0].tankPosition).toEqual({ x: -8, y: 2.5 });
     expect(state.players[1].tankPosition).toEqual({ x: 8, y: 2.5 });
+  });
+
+  it("keeps a normal-mode player on the safe base after playable ground is destroyed", () => {
+    const state = createInitialGameState("normal", "map1");
+    const next = applyLastShot({
+      ...state,
+      lastShot: createAppliedTerrainBlast(state, { x: 8, y: 1.5 }, 1.1),
+    });
+
+    expect(next.players[1].tankPosition.y).toBe(0.5);
+    expect(next.winnerId).toBeNull();
+  });
+
+  it("defeats an ocean-mode player when destroyed playable ground has no lower support", () => {
+    const state = createInitialGameState("ocean", "map1");
+    const next = applyLastShot({
+      ...state,
+      lastShot: createAppliedTerrainBlast(state, { x: 8, y: 1.5 }, 1.1),
+    });
+
+    expect(next.players[1].hp).toBe(0);
+    expect(next.winnerId).toBe("p1");
   });
 
   it("switches turn and applies damage after a valid shot", () => {
@@ -133,7 +202,8 @@ describe("game reducer", () => {
     };
     const prepared = prepareShot(state, { vertexX: 0, vertexY: 6 });
 
-    expect(prepared.lastShot?.terrainImpactBlockId).toBe("test-platform");
+    expect(prepared.lastShot?.terrainImpactBlockId).toBe("terrain-column");
+    expect(prepared.lastShot?.collisionType).toBe("terrain");
     expect(prepared.lastShot?.impactPoint.y).toBeGreaterThan(0);
 
     const applied = applyLastShot(prepared);
@@ -143,7 +213,65 @@ describe("game reducer", () => {
     expect(applied.activePlayerId).toBe("p2");
   });
 
-  it("keeps turn and HP unchanged after invalid input", () => {
+  it("marks out-of-bounds shots with a collision type", () => {
+    const base = createFlatShotState();
+    const state = {
+      ...base,
+      players: [
+        { ...base.players[0], tankPosition: { x: -9, y: 0 } },
+        base.players[1],
+      ] as ReturnType<typeof createInitialGameState>["players"],
+    };
+    const prepared = prepareShot(state, { vertexX: 1, vertexY: 6 });
+
+    expect(prepared.lastShot?.collisionType).toBe("outOfBounds");
+  });
+
+  it("marks damaging ground blasts as tank collision candidates", () => {
+    const next = prepareShot(createFlatShotState(), { vertexX: 0, vertexY: 6 });
+
+    expect(next.lastShot?.collisionType).toBe("tank");
+  });
+
+
+  it("destroys destructible terrain inside the blast when a shot hits a tank", () => {
+    const base = createFlatShotState();
+    const state = {
+      ...base,
+      players: [
+        { ...base.players[0], tankPosition: { x: -8, y: 0 } },
+        { ...base.players[1], tankPosition: { x: 8, y: 0 } },
+      ] as ReturnType<typeof createInitialGameState>["players"],
+      terrain: {
+        blocks: [
+          { id: "safe-base", x: 7.5, y: 0, width: 1, height: 0.1, isFoundation: true },
+          { id: "target-platform", x: 7.5, y: 0.1, width: 1, height: 0.4 },
+        ],
+        segments: [] as ReturnType<typeof createInitialGameState>["terrain"]["segments"],
+        holes: [],
+        columns: buildTerrainColumnMap({
+          blocks: [
+            { id: "safe-base", x: 7.5, y: 0, width: 1, height: 0.1, isFoundation: true },
+            { id: "target-platform", x: 7.5, y: 0.1, width: 1, height: 0.4 },
+          ],
+          segments: [],
+          holes: [],
+        }),
+      },
+    };
+
+    const prepared = prepareShot(state, { vertexX: 0, vertexY: 6, projectileType: "normal" });
+
+    expect(prepared.lastShot?.collisionType).toBe("tank");
+    expect(prepared.lastShot?.impactPoint).toEqual({ x: 8, y: 0 });
+
+    const applied = applyLastShot(prepared);
+    const impactColumn = applied.terrain.columns?.get(terrainColumnIndex(8));
+
+    expect(applied.terrain.holes.at(-1)).toEqual({ id: "blast-1", x: 8, y: 0, radius: 1 });
+    expect(impactColumn?.some((segment) => segment.destructible)).toBe(false);
+    expect(impactColumn?.some((segment) => !segment.destructible)).toBe(true);
+  });  it("keeps turn and HP unchanged after invalid input", () => {
     const next = submitShot(createInitialGameState(), { vertexX: -8, vertexY: 6 });
 
     expect(next.activePlayerId).toBe("p1");
@@ -447,7 +575,7 @@ describe("game reducer", () => {
     expect(moveActivePlayer(state, 1)).toBe(state);
   });
 
-  it("blocks movement on terrain steeper than slope 1", () => {
+  it("blocks uphill movement on terrain steeper than slope 1", () => {
     const state = {
       ...createInitialGameState(),
       players: [
@@ -462,7 +590,7 @@ describe("game reducer", () => {
       ] as ReturnType<typeof createInitialGameState>["players"],
       terrain: {
         blocks: [] as ReturnType<typeof createInitialGameState>["terrain"]["blocks"],
-        segments: [{ id: "steep", x1: -2, y1: 0, x2: -1, y2: 2 }],
+        segments: [{ id: "steep", x1: -2, y1: 0, x2: -1, y2: 1.5 }],
         holes: [],
       },
     };
@@ -684,13 +812,13 @@ describe("game reducer", () => {
     expect(moved.winnerId).toBe("p2");
   });
 
-  it("blocks movement through the wall of a circular blast hole", () => {
+  it("allows dropping into a circular blast hole when moving downhill", () => {
     const state = {
       ...createInitialGameState(),
       players: [
         {
           ...createInitialGameState().players[0],
-          tankPosition: { x: -7.1, y: 1.56 },
+          tankPosition: { x: -7.4, y: 1.2 },
         },
         {
           ...createInitialGameState().players[1],
@@ -704,11 +832,14 @@ describe("game reducer", () => {
       },
     };
 
-    expect(canMoveActivePlayer(state, 1)).toBe(false);
-    expect(moveActivePlayer(state, 1)).toBe(state);
+    const moved = moveActivePlayer(state, -1);
+
+    expect(canMoveActivePlayer(state, -1)).toBe(true);
+    expect(moved.players[0].tankPosition.x).toBe(-7.5);
+    expect(moved.players[0].tankPosition.y).toBeCloseTo(1.13);
   });
 
-  it("blocks movement while standing on a steep circular hole boundary", () => {
+  it("allows movement down a steep circular hole boundary", () => {
     const state = {
       ...createInitialGameState(),
       activePlayerId: "p2" as const,
@@ -731,11 +862,14 @@ describe("game reducer", () => {
       },
     };
 
-    expect(canMoveActivePlayer(state, 1)).toBe(false);
-    expect(canMoveActivePlayer(state, -1)).toBe(false);
+    const moved = moveActivePlayer(state, 1);
+
+    expect(canMoveActivePlayer(state, 1)).toBe(true);
+    expect(moved.players[1].tankPosition.x).toBe(7.2);
+    expect(moved.players[1].tankPosition.y).toBeCloseTo(1.4);
   });
 
-  it("blocks crossing into a circular blast hole through its side entrance", () => {
+  it("allows entering a circular blast hole side when it is a downhill move", () => {
     const state = {
       ...createInitialGameState(),
       activePlayerId: "p2" as const,
@@ -747,7 +881,7 @@ describe("game reducer", () => {
         },
         {
           ...createInitialGameState().players[1],
-          tankPosition: { x: 6.95, y: 2 },
+          tankPosition: { x: 7, y: 2 },
           isActive: true,
         },
       ] as ReturnType<typeof createInitialGameState>["players"],
@@ -758,8 +892,11 @@ describe("game reducer", () => {
       },
     };
 
-    expect(canMoveActivePlayer(state, 1)).toBe(false);
-    expect(moveActivePlayer(state, 1)).toBe(state);
+    const moved = moveActivePlayer(state, 1);
+
+    expect(canMoveActivePlayer(state, 1)).toBe(true);
+    expect(moved.players[1].tankPosition.x).toBe(7.1);
+    expect(moved.players[1].tankPosition.y).toBeCloseTo(1.56);
   });
 
   it("allows dropping along a circular blast hole boundary when the slope is gentle", () => {
@@ -926,6 +1063,7 @@ describe("game reducer", () => {
         explanation: [],
         isApplied: false,
         terrainImpactBlockId: "left",
+        collisionType: "terrain" as const,
       },
     };
 

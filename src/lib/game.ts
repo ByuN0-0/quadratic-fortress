@@ -7,6 +7,8 @@ import {
   formatCoordinate,
   formatEquation,
   getProjectileConfig,
+  getYAtX,
+  isImpactInBounds,
   nearlyEqual,
   round,
   roundToStep,
@@ -16,15 +18,17 @@ import {
   type Quadratic,
 } from "./math";
 import {
-  AIR_TERRAIN_HEIGHT,
+  buildTerrainColumnMap,
+  cloneTerrainColumnMap,
   createInitialTerrain,
+  doesTerrainColumnOverlapBody,
   destroyTerrain,
+  findColumnSupportAtX,
   findProjectileTerrainImpact,
-  findSupportAtX,
   findSupportY,
   OCEAN_FALL_Y,
-  SUPPORT_TOLERANCE,
   settlePlayersOnTerrain,
+  TERRAIN_COLUMN_STEP,
   type TerrainMapId,
   type TerrainState,
 } from "./terrain";
@@ -67,6 +71,8 @@ export type ShotInput = {
 
 export type MoveDirection = -1 | 1;
 
+export type ShotCollisionType = "terrain" | "tank" | "outOfBounds" | "none";
+
 export type ShotResult = {
   id: number;
   shooterId: PlayerId;
@@ -84,6 +90,7 @@ export type ShotResult = {
   explanation: string[];
   isApplied: boolean;
   terrainImpactBlockId: string | null;
+  collisionType: ShotCollisionType;
 };
 
 export type GameState = {
@@ -112,9 +119,11 @@ export const MOVE_TERRITORY_LIMIT_MESSAGE = "진영 경계입니다.";
 export const BACKWARD_AIM_MESSAGE =
   "뒤쪽으로는 조준할 수 없습니다. 꼭짓점을 상대 방향으로 이동하세요.";
 
-const SIDE_WALL_TOLERANCE = 0.02;
+const TANK_DIRECT_HIT_RADIUS = 0.45;
+const TANK_TERRAIN_PRIORITY_RADIUS = 0.8;
 const TANK_SIDE_BODY_HEIGHT = 0.75;
 const CURRENT_SUPPORT_REACH_HEIGHT = MAX_TANK_STEP_UP_HEIGHT + 0.1;
+const INTERNAL_MOVE_STEPS = Math.round(MOVE_STEP / TERRAIN_COLUMN_STEP);
 
 export const PRACTICE_STAGES: PracticeStageConfig[] = [
   {
@@ -170,6 +179,135 @@ export const PRACTICE_STAGES: PracticeStageConfig[] = [
   },
 ];
 
+
+function withTerrainColumns(terrain: TerrainState): TerrainState {
+  return {
+    ...terrain,
+    columns: buildTerrainColumnMap(terrain),
+  };
+}
+
+
+type TankImpact = {
+  point: Point;
+  collisionType: "tank";
+};
+
+function findProjectileTankImpact(
+  shooter: Point,
+  target: Point,
+  quadratic: Quadratic,
+  groundImpact: Point,
+  minTravelDistance: number,
+): TankImpact | null {
+  const pathMinX = Math.min(shooter.x, groundImpact.x) - 0.01;
+  const pathMaxX = Math.max(shooter.x, groundImpact.x) + 0.01;
+
+  if (target.x < pathMinX || target.x > pathMaxX) {
+    return null;
+  }
+
+  const yAtTarget = getYAtX(quadratic, target.x);
+  const traveled = distance(shooter, { x: target.x, y: yAtTarget });
+
+  if (traveled < minTravelDistance) {
+    return null;
+  }
+
+  return Math.abs(yAtTarget - target.y) <= TANK_DIRECT_HIT_RADIUS
+    ? { point: { ...target }, collisionType: "tank" }
+    : null;
+}
+
+function shouldPreferTankImpact(
+  tankImpact: TankImpact | null,
+  terrainImpact: { point: Point; blockId: string; collisionType: "terrain" } | null,
+  target: Player,
+): boolean {
+  if (!tankImpact) {
+    return false;
+  }
+
+  return !terrainImpact || distance(terrainImpact.point, target.tankPosition) <= TANK_TERRAIN_PRIORITY_RADIUS;
+}
+
+type ResolvedShotMath = {
+  math: ReturnType<typeof calculateShotMath>;
+  terrainImpact: { point: Point; blockId: string; collisionType: "terrain" } | null;
+  tankImpact: TankImpact | null;
+};
+
+function resolveShotMath(
+  state: GameState,
+  shooter: Player,
+  target: Player,
+  vertex: Point,
+  input: ShotInput,
+  checkedMath: ReturnType<typeof calculateShotMath>,
+): ResolvedShotMath {
+  const terrainImpact =
+    checkedMath.validationErrors.length === 0
+      ? findProjectileTerrainImpact(
+          shooter.tankPosition,
+          checkedMath.quadratic,
+          checkedMath.impactPoint,
+          state.terrain,
+          PROJECTILE_TERRAIN_ARM_DISTANCE,
+        )
+      : null;
+  const tankImpact =
+    checkedMath.validationErrors.length === 0
+      ? findProjectileTankImpact(
+          shooter.tankPosition,
+          target.tankPosition,
+          checkedMath.quadratic,
+          checkedMath.impactPoint,
+          PROJECTILE_TERRAIN_ARM_DISTANCE,
+        )
+      : null;
+  const useTankImpact = shouldPreferTankImpact(tankImpact, terrainImpact, target);
+  const impactOverride = useTankImpact ? tankImpact?.point : terrainImpact?.point;
+  const math = impactOverride
+    ? calculateShotMath(
+        shooter.tankPosition,
+        target.tankPosition,
+        vertex,
+        input.projectileType,
+        impactOverride,
+      )
+    : checkedMath;
+
+  return {
+    math,
+    terrainImpact: useTankImpact ? null : terrainImpact,
+    tankImpact: useTankImpact ? tankImpact : null,
+  };
+}
+function getShotCollisionType(
+  terrainImpact: { point: Point; blockId: string; collisionType: "terrain" } | null,
+  checkedMath: ReturnType<typeof calculateShotMath>,
+  math: ReturnType<typeof calculateShotMath>,
+  target: Player,
+  shooter: Player,
+): ShotCollisionType {
+  if (terrainImpact) {
+    return "terrain";
+  }
+
+  if (checkedMath.validationErrors.length === 0 && !isImpactInBounds(checkedMath.impactPoint)) {
+    return "outOfBounds";
+  }
+
+  if (
+    math.isValidImpact &&
+    (distance(math.impactPoint, target.tankPosition) < math.projectile.blastRadius ||
+      distance(math.impactPoint, shooter.tankPosition) < math.projectile.blastRadius)
+  ) {
+    return "tank";
+  }
+
+  return "none";
+}
 export function createInitialGameState(
   mode: GameMode = "normal",
   mapId: TerrainMapId = "map1",
@@ -178,7 +316,9 @@ export function createInitialGameState(
     return createPracticeGameState(1);
   }
 
-  const terrain = createInitialTerrain(mapId);
+  const terrain = withTerrainColumns(createInitialTerrain(mapId, {
+    includeSafeBase: mode !== "ocean",
+  }));
   const p1StartX = -8;
   const p2StartX = 8;
 
@@ -244,7 +384,7 @@ export function createPracticeGameState(
     movementUsed: 0,
     shotHistory,
     lastShot: null,
-    terrain: cloneTerrain(stage.terrain),
+    terrain: withTerrainColumns(cloneTerrain(stage.terrain)),
     mode: "practice",
     mapId: "map1",
     winnerId: null,
@@ -300,25 +440,14 @@ export function prepareShot(state: GameState, input: ShotInput): GameState {
     isValidImpact: directionErrors.length > 0 ? false : baseMath.isValidImpact,
     validationErrors: [...directionErrors, ...baseMath.validationErrors],
   };
-  const terrainImpact =
-    checkedMath.validationErrors.length === 0
-      ? findProjectileTerrainImpact(
-          shooter.tankPosition,
-          checkedMath.quadratic,
-          checkedMath.impactPoint,
-          state.terrain,
-          PROJECTILE_TERRAIN_ARM_DISTANCE,
-        )
-      : null;
-  const math = terrainImpact
-    ? calculateShotMath(
-        shooter.tankPosition,
-        target.tankPosition,
-        vertex,
-        input.projectileType,
-        terrainImpact.point,
-      )
-    : checkedMath;
+  const { math, terrainImpact, tankImpact } = resolveShotMath(
+    state,
+    shooter,
+    target,
+    vertex,
+    input,
+    checkedMath,
+  );
   const result: ShotResult = {
     id: state.shotHistory.length + 1,
     shooterId: shooter.id,
@@ -332,6 +461,7 @@ export function prepareShot(state: GameState, input: ShotInput): GameState {
     explanation: buildExplanation(shooter, target, vertex, math),
     isApplied: false,
     terrainImpactBlockId: terrainImpact?.blockId ?? null,
+    collisionType: tankImpact?.collisionType ?? getShotCollisionType(terrainImpact, checkedMath, math, target, shooter),
   };
 
   return {
@@ -467,55 +597,17 @@ export function isMoveBlockedByTerritory(state: GameState, direction: MoveDirect
 }
 
 export function canMoveActivePlayer(state: GameState, direction: MoveDirection): boolean {
-  if (state.winnerId || getRemainingMove(state) < MOVE_STEP) {
-    return false;
-  }
-
-  const activePlayer = getActivePlayer(state);
-  const targetPlayer = getTargetPlayer(state);
-  const nextX = roundToStep(activePlayer.tankPosition.x + direction * MOVE_STEP);
-  const currentSupport = findCurrentTankSupport(
-    state,
-    activePlayer.tankPosition.x,
-    activePlayer.tankPosition.y,
-  );
-  const nextSupport = findReachableTankSupport(state, nextX, activePlayer.tankPosition.y);
-  const nextSlope = nextSupport?.slope ?? 0;
-  const heightDelta = currentSupport && nextSupport ? nextSupport.y - currentSupport.y : -Infinity;
-  const destinationY = nextSupport?.y ?? (hasSafeBaseTerrain(state) ? BOARD.yMin : OCEAN_FALL_Y);
-  const isBlockedBySideWall =
-    currentSupport !== null &&
-    isTerrainSideWallInMovePath(
-      state,
-      activePlayer.tankPosition.x,
-      nextX,
-      direction,
-      currentSupport.y,
-      destinationY,
-      heightDelta,
-    );
-
-  return (
-    nextX >= BOARD.xMin &&
-    nextX <= BOARD.xMax &&
-    isXInsideMoveTerritory(state, activePlayer.id, nextX) &&
-    !nearlyEqual(nextX, targetPlayer.tankPosition.x) &&
-    currentSupport !== null &&
-    !isBlockedBySideWall &&
-    Math.abs(currentSupport.slope) <= MAX_TANK_TERRAIN_SLOPE &&
-    Math.abs(nextSlope) <= MAX_TANK_TERRAIN_SLOPE &&
-    heightDelta <= MAX_TANK_STEP_UP_HEIGHT + 0.01
-  );
+  return simulateActivePlayerMove(state, direction) !== null;
 }
 
 export function moveActivePlayer(state: GameState, direction: MoveDirection): GameState {
-  if (!canMoveActivePlayer(state, direction)) {
+  const moveResult = simulateActivePlayerMove(state, direction);
+
+  if (!moveResult) {
     return state;
   }
 
   const activePlayer = getActivePlayer(state);
-  const nextX = roundToStep(activePlayer.tankPosition.x + direction * MOVE_STEP);
-  const nextSupport = findReachableTankSupport(state, nextX, activePlayer.tankPosition.y);
   const nextPlayers = state.players.map((player) => {
     if (player.id !== activePlayer.id) {
       return player;
@@ -525,8 +617,8 @@ export function moveActivePlayer(state: GameState, direction: MoveDirection): Ga
       ...player,
       tankPosition: {
         ...player.tankPosition,
-        x: roundToStep(player.tankPosition.x + direction * MOVE_STEP),
-        y: nextSupport?.y ?? (hasSafeBaseTerrain(state) ? BOARD.yMin : OCEAN_FALL_Y),
+        x: moveResult.position.x,
+        y: moveResult.position.y,
       },
     };
   }) as [Player, Player];
@@ -537,7 +629,9 @@ export function moveActivePlayer(state: GameState, direction: MoveDirection): Ga
     movementUsed: roundToStep(Math.min(MAX_TURN_MOVE, state.movementUsed + MOVE_STEP)),
     lastShot: null,
     winnerId:
-      state.mode === "ocean" && !nextSupport ? getOpponentId(activePlayer.id) : state.winnerId,
+      state.mode === "ocean" && moveResult.fellIntoOcean
+        ? getOpponentId(activePlayer.id)
+        : state.winnerId,
   };
 }
 
@@ -600,25 +694,14 @@ export function createPreviewShot(state: GameState, input: ShotInput): ShotResul
     isValidImpact: directionErrors.length > 0 ? false : baseMath.isValidImpact,
     validationErrors: [...directionErrors, ...baseMath.validationErrors],
   };
-  const terrainImpact =
-    checkedMath.validationErrors.length === 0
-      ? findProjectileTerrainImpact(
-          shooter.tankPosition,
-          checkedMath.quadratic,
-          checkedMath.impactPoint,
-          state.terrain,
-          PROJECTILE_TERRAIN_ARM_DISTANCE,
-        )
-      : null;
-  const math = terrainImpact
-    ? calculateShotMath(
-        shooter.tankPosition,
-        target.tankPosition,
-        vertex,
-        input.projectileType,
-        terrainImpact.point,
-      )
-    : checkedMath;
+  const { math, terrainImpact, tankImpact } = resolveShotMath(
+    state,
+    shooter,
+    target,
+    vertex,
+    input,
+    checkedMath,
+  );
 
   return {
     id: 0,
@@ -633,6 +716,7 @@ export function createPreviewShot(state: GameState, input: ShotInput): ShotResul
     explanation: buildExplanation(shooter, target, vertex, math),
     isApplied: false,
     terrainImpactBlockId: terrainImpact?.blockId ?? null,
+    collisionType: tankImpact?.collisionType ?? getShotCollisionType(terrainImpact, checkedMath, math, target, shooter),
   };
 }
 
@@ -728,147 +812,105 @@ function cloneTerrain(terrain: TerrainState): TerrainState {
     blocks: terrain.blocks.map((block) => ({ ...block })),
     segments: terrain.segments.map((segment) => ({ ...segment })),
     holes: terrain.holes.map((hole) => ({ ...hole })),
+    columns: terrain.columns ? cloneTerrainColumnMap(terrain.columns) : undefined,
   };
 }
 
-function findReachableTankSupport(
+type MoveSimulationResult = {
+  position: Point;
+  fellIntoOcean: boolean;
+};
+
+function simulateActivePlayerMove(
   state: GameState,
-  x: number,
-  currentY: number,
-): { y: number; slope: number } | null {
-  const maxReachY = currentY + MAX_TANK_TERRAIN_SLOPE * MOVE_STEP;
-  const support = findSupportAtX(x, maxReachY, state.terrain);
-
-  if (support || !hasSafeBaseTerrain(state)) {
-    return support;
+  direction: MoveDirection,
+): MoveSimulationResult | null {
+  if (state.winnerId || getRemainingMove(state) < MOVE_STEP) {
+    return null;
   }
 
-  return { y: BOARD.yMin, slope: 0 };
-}
+  const activePlayer = getActivePlayer(state);
+  const targetPlayer = getTargetPlayer(state);
+  const columns = buildTerrainColumnMap(state.terrain);
+  const hasBase = hasSafeBaseTerrain(state);
+  let x = round(activePlayer.tankPosition.x, 2);
+  let y = activePlayer.tankPosition.y;
+  let isFalling = false;
+  const initialSupport = findColumnSupportAtX(columns, x, y + CURRENT_SUPPORT_REACH_HEIGHT, hasBase);
 
-function findCurrentTankSupport(
-  state: GameState,
-  x: number,
-  currentY: number,
-): { y: number; slope: number } | null {
-  const support = findSupportAtX(x, currentY + CURRENT_SUPPORT_REACH_HEIGHT, state.terrain);
-
-  if (!support) {
-    return hasSafeBaseTerrain(state) ? { y: BOARD.yMin, slope: 0 } : null;
+  if (!initialSupport) {
+    return null;
   }
 
-  if (Math.abs(support.slope) <= MAX_TANK_TERRAIN_SLOPE) {
-    return support;
+  y = initialSupport.topY;
+
+  for (let step = 0; step < INTERNAL_MOVE_STEPS; step += 1) {
+    const nextX = round(x + direction * TERRAIN_COLUMN_STEP, 2);
+
+    if (
+      nextX < BOARD.xMin ||
+      nextX > BOARD.xMax ||
+      !isXInsideMoveTerritory(state, activePlayer.id, nextX) ||
+      nearlyEqual(nextX, targetPlayer.tankPosition.x)
+    ) {
+      return null;
+    }
+
+    const nextSupport = findColumnSupportAtX(
+      columns,
+      nextX,
+      y + MAX_TANK_STEP_UP_HEIGHT,
+      hasBase,
+    );
+    const nextY = nextSupport?.topY ?? (hasBase ? BOARD.yMin : OCEAN_FALL_Y);
+    const heightDelta = nextY - y;
+
+    if (heightDelta < -MAX_TANK_STEP_UP_HEIGHT) {
+      if (doesTerrainColumnOverlapBody(columns, nextX, y, TANK_SIDE_BODY_HEIGHT)) {
+        return null;
+      }
+
+      x = nextX;
+      isFalling = true;
+      continue;
+    }
+
+    if (heightDelta > MAX_TANK_STEP_UP_HEIGHT + 0.01) {
+      return null;
+    }
+
+    if (
+      heightDelta > MAX_TANK_TERRAIN_SLOPE * TERRAIN_COLUMN_STEP + 0.01 &&
+      nextSupport?.topKind !== "flat"
+    ) {
+      return null;
+    }
+
+    const bodyCheckY = heightDelta < -0.01 ? y : nextY;
+    if (doesTerrainColumnOverlapBody(columns, nextX, bodyCheckY, TANK_SIDE_BODY_HEIGHT)) {
+      return null;
+    }
+
+    x = nextX;
+    y = nextY;
   }
 
-  const lowerSupport = findSupportAtX(x, support.y - SUPPORT_TOLERANCE * 2, state.terrain);
-
-  if (
-    lowerSupport &&
-    Math.abs(lowerSupport.slope) <= MAX_TANK_TERRAIN_SLOPE &&
-    Math.abs(currentY - lowerSupport.y) <= CURRENT_SUPPORT_REACH_HEIGHT
-  ) {
-    return lowerSupport;
+  if (isFalling) {
+    const landingSupport = findColumnSupportAtX(columns, x, y + CURRENT_SUPPORT_REACH_HEIGHT, hasBase);
+    y = landingSupport?.topY ?? (hasBase ? BOARD.yMin : OCEAN_FALL_Y);
   }
 
-  return support;
+  return {
+    position: {
+      x: roundToStep(x),
+      y: round(y, 2),
+    },
+    fellIntoOcean: !hasBase && y <= OCEAN_FALL_Y,
+  };
 }
 
 function hasSafeBaseTerrain(state: GameState): boolean {
   return state.mode === "normal" || state.mode === "practice";
-}
-
-function isTerrainSideWallInMovePath(
-  state: GameState,
-  currentX: number,
-  nextX: number,
-  direction: MoveDirection,
-  currentY: number,
-  destinationY: number,
-  heightDelta: number,
-): boolean {
-  const pathMin = Math.min(currentX, nextX) - SIDE_WALL_TOLERANCE;
-  const pathMax = Math.max(currentX, nextX) + SIDE_WALL_TOLERANCE;
-  const bodyBottom = currentY + SIDE_WALL_TOLERANCE;
-  const bodyTop = currentY + TANK_SIDE_BODY_HEIGHT;
-
-  const isBlockedByBlockSide = state.terrain.blocks.some((block) => {
-    const faceX = direction === 1 ? block.x : block.x + block.width;
-    const blockTop = block.y + block.height;
-    const blockBottom = block.y;
-
-    if (faceX < pathMin || faceX > pathMax) {
-      return false;
-    }
-
-    const overlapsTankSide =
-      blockTop >= bodyBottom - SIDE_WALL_TOLERANCE &&
-      blockBottom <= bodyTop + SIDE_WALL_TOLERANCE;
-
-    if (!overlapsTankSide) {
-      return false;
-    }
-
-    const isDroppingPastPlatformEdge =
-      destinationY < currentY - SIDE_WALL_TOLERANCE &&
-      blockTop <= currentY + SIDE_WALL_TOLERANCE;
-
-    if (isDroppingPastPlatformEdge) {
-      return false;
-    }
-
-    const isSmallStepOntoTop =
-      destinationY >= blockTop - SIDE_WALL_TOLERANCE &&
-      heightDelta >= -SIDE_WALL_TOLERANCE &&
-      heightDelta <= MAX_TANK_STEP_UP_HEIGHT + SIDE_WALL_TOLERANCE;
-
-    return !isSmallStepOntoTop;
-  });
-
-  if (isBlockedByBlockSide) {
-    return true;
-  }
-
-  return state.terrain.segments.some((segment) => {
-    const leftEndpoint =
-      segment.x1 <= segment.x2
-        ? { x: segment.x1, y: segment.y1 }
-        : { x: segment.x2, y: segment.y2 };
-    const rightEndpoint =
-      segment.x1 <= segment.x2
-        ? { x: segment.x2, y: segment.y2 }
-        : { x: segment.x1, y: segment.y1 };
-    const face = direction === 1 ? leftEndpoint : rightEndpoint;
-    const faceTop = face.y;
-    const faceBottom = face.y - AIR_TERRAIN_HEIGHT;
-
-    if (face.x < pathMin || face.x > pathMax) {
-      return false;
-    }
-
-    const overlapsTankSide =
-      faceTop >= bodyBottom - SIDE_WALL_TOLERANCE &&
-      faceBottom <= bodyTop + SIDE_WALL_TOLERANCE;
-
-    if (!overlapsTankSide) {
-      return false;
-    }
-
-    const isDroppingPastPlatformEdge =
-      destinationY < currentY - SIDE_WALL_TOLERANCE &&
-      faceTop <= currentY + SIDE_WALL_TOLERANCE;
-
-    if (isDroppingPastPlatformEdge) {
-      return false;
-    }
-
-    const isSmallStepOntoTop =
-      destinationY >= faceTop - SIDE_WALL_TOLERANCE &&
-      heightDelta >= -SIDE_WALL_TOLERANCE &&
-      heightDelta <= MAX_TANK_STEP_UP_HEIGHT + SIDE_WALL_TOLERANCE;
-
-    return !isSmallStepOntoTop;
-  });
 }
 
 export function isVertexInsideBoard(input: ShotInput): boolean {

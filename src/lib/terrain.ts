@@ -30,6 +30,7 @@ export type TerrainState = {
   blocks: TerrainBlock[];
   segments: TerrainSegment[];
   holes: TerrainHole[];
+  columns?: TerrainColumnMap;
 };
 
 export type TerrainMapId = "map1" | "map2" | "map3" | "map4" | "map5" | "map6" | "map7" | "map8";
@@ -41,15 +42,47 @@ export type TerrainHole = {
   radius: number;
 };
 
+export type CreateTerrainOptions = {
+  includeSafeBase?: boolean;
+};
+
 type TerrainSupport = {
   y: number;
   slope: number;
 };
 
+export type TerrainColumnSegment = {
+  topY: number;
+  bottomY: number;
+  type: "block" | "segment" | "foundation";
+  destructible: boolean;
+  topKind: "flat" | "slope" | "hole";
+};
+
+export type TerrainColumnMap = Map<number, TerrainColumnSegment[]>;
+
+export type TerrainColumnCleanupOptions = {
+  blastCenter?: Point;
+  blastRadius?: number;
+};
+
+export type TerrainBlastResidual = {
+  index: number;
+  x: number;
+  bottomY: number;
+  topY: number;
+  destructible: boolean;
+  type: TerrainColumnSegment["type"];
+  topKind: TerrainColumnSegment["topKind"];
+};
+
 export const AIR_TERRAIN_HEIGHT = 0.5;
+export const TERRAIN_COLUMN_STEP = 0.01;
+export const MIN_TERRAIN_COLUMN_SEGMENT_HEIGHT = 0.05;
 export const SUPPORT_TOLERANCE = 0.08;
 export const OCEAN_FALL_Y = -1;
-const MIN_EARLY_TERRAIN_IMPACT_DISTANCE = 0.25;
+const TERRAIN_COLUMN_CLEANUP_MERGE_GAP = 0.02;
+const SAFE_FOUNDATION_HEIGHT = 0.5;
 export const TERRAIN_MAP_IDS: TerrainMapId[] = [
   "map1",
   "map2",
@@ -240,10 +273,11 @@ function createDigitOneBlocks(prefix: string, x: number, y: number): TerrainBloc
 
 function createLowerFoundationBlocks(prefix: string): TerrainBlock[] {
   return [
-    { id: `${prefix}-base`, x: -10, y: 0, width: 20, height: 2, isFoundation: true },
-    { id: `${prefix}-left-side`, x: -10, y: 2, width: 1, height: 0.9, isFoundation: true },
-    { id: `${prefix}-right-side`, x: 9, y: 2, width: 1, height: 0.9, isFoundation: true },
-    { id: `${prefix}-center`, x: -2, y: 2, width: 4, height: 1.4, isFoundation: true },
+    { id: `${prefix}-safe-base`, x: -10, y: 0, width: 20, height: SAFE_FOUNDATION_HEIGHT, isFoundation: true },
+    { id: `${prefix}-playable-base`, x: -10, y: SAFE_FOUNDATION_HEIGHT, width: 20, height: 2 - SAFE_FOUNDATION_HEIGHT },
+    { id: `${prefix}-left-side`, x: -10, y: 2, width: 1, height: 0.9 },
+    { id: `${prefix}-right-side`, x: 9, y: 2, width: 1, height: 0.9 },
+    { id: `${prefix}-center`, x: -2, y: 2, width: 4, height: 1.4 },
   ];
 }
 
@@ -333,47 +367,261 @@ function createDigitBlocks(prefix: string, x: number, y: number, cells: [number,
   }));
 }
 
-export function createInitialTerrain(mapId: TerrainMapId = "map1"): TerrainState {
+export function createInitialTerrain(
+  mapId: TerrainMapId = "map1",
+  options: CreateTerrainOptions = {},
+): TerrainState {
   const terrain = INITIAL_TERRAIN_BY_MAP[mapId] ?? INITIAL_TERRAIN_BY_MAP.map1;
+  const includeSafeBase = options.includeSafeBase ?? true;
 
   return {
-    blocks: terrain.blocks.map((block) => ({ ...block })),
+    blocks: terrain.blocks
+      .filter((block) => includeSafeBase || !block.isFoundation)
+      .map((block) => ({ ...block })),
     segments: terrain.segments.map((segment) => ({ ...segment })),
     holes: [],
   };
 }
 
+export function buildTerrainColumnMap(terrain: TerrainState | TerrainBlock[]): TerrainColumnMap {
+  const normalizedTerrain = normalizeTerrain(terrain);
+
+  if (normalizedTerrain.columns) {
+    return cloneTerrainColumnMap(normalizedTerrain.columns);
+  }
+
+  const columns: TerrainColumnMap = new Map();
+  const startIndex = terrainColumnIndex(BOARD.xMin);
+  const endIndex = terrainColumnIndex(BOARD.xMax);
+
+  for (let index = startIndex; index <= endIndex; index += 1) {
+    const x = terrainColumnX(index);
+    const solidSegments = [
+      ...normalizedTerrain.blocks.flatMap((block) => terrainBlockToColumnSegments(block, x)),
+      ...normalizedTerrain.segments.flatMap((segment) => terrainSlopeToColumnSegments(segment, x)),
+    ].flatMap((segment) => subtractHolesFromColumnSegment(segment, x, normalizedTerrain.holes));
+
+    if (solidSegments.length > 0) {
+      columns.set(
+        index,
+        solidSegments
+          .filter((segment) => segment.topY - segment.bottomY > FLOAT_EPSILON)
+          .sort((a, b) => b.topY - a.topY),
+      );
+    }
+  }
+
+  return columns;
+}
+
+export function cloneTerrainColumnMap(columns: TerrainColumnMap): TerrainColumnMap {
+  return new Map(
+    [...columns.entries()].map(([index, segments]) => [
+      index,
+      segments.map((segment) => ({ ...segment })),
+    ]),
+  );
+}
+
+export function findColumnSupportAtX(
+  columns: TerrainColumnMap,
+  x: number,
+  fromY: number,
+  hasBaseTerrain = true,
+): TerrainColumnSegment | null {
+  const column = getStableTerrainColumnSegments(columns, x);
+  const supports = column.filter((segment) => segment.topY <= fromY + SUPPORT_TOLERANCE);
+  const upperSupports = supports.filter((segment) => segment.type !== "foundation");
+  const candidates = upperSupports.length > 0 ? upperSupports : supports;
+
+  if (candidates.length === 0) {
+    return hasBaseTerrain
+      ? {
+          topY: BOARD.yMin,
+          bottomY: BOARD.yMin,
+          type: "foundation",
+          destructible: false,
+          topKind: "flat",
+        }
+      : null;
+  }
+
+  return candidates.reduce((highest, segment) =>
+    segment.topY > highest.topY ? segment : highest,
+  );
+}
+
+export function doesTerrainColumnOverlapBody(
+  columns: TerrainColumnMap,
+  x: number,
+  footY: number,
+  bodyHeight: number,
+): boolean {
+  const bodyBottom = footY + SUPPORT_TOLERANCE;
+  const bodyTop = footY + bodyHeight;
+
+  return getTerrainColumnSegments(columns, x).some(
+    (segment) => segment.topY > bodyBottom && segment.bottomY < bodyTop,
+  );
+}
+
+export function terrainColumnX(index: number): number {
+  return round(BOARD.xMin + index * TERRAIN_COLUMN_STEP, 2);
+}
+
+export function terrainColumnCenterX(index: number): number {
+  return BOARD.xMin + (index + 0.5) * TERRAIN_COLUMN_STEP;
+}
+
+function getClosestDxFromCircleCenterToColumn(index: number, centerX: number): number {
+  const leftX = terrainColumnX(index);
+  const rightX = leftX + TERRAIN_COLUMN_STEP;
+
+  if (centerX >= leftX && centerX <= rightX) {
+    return 0;
+  }
+
+  return Math.min(Math.abs(leftX - centerX), Math.abs(rightX - centerX));
+}
+
+export function terrainColumnIndex(x: number): number {
+  return Math.round((round(x, 2) - BOARD.xMin) / TERRAIN_COLUMN_STEP);
+}
+
+function getTerrainColumnSegments(columns: TerrainColumnMap, x: number): TerrainColumnSegment[] {
+  return columns.get(terrainColumnIndex(x)) ?? [];
+}
+
+function getStableTerrainColumnSegments(columns: TerrainColumnMap, x: number): TerrainColumnSegment[] {
+  return getTerrainColumnSegments(columns, x).filter(isStableTerrainColumnSegment);
+}
+
+function isStableTerrainColumnSegment(segment: TerrainColumnSegment): boolean {
+  return segment.topY - segment.bottomY >= MIN_TERRAIN_COLUMN_SEGMENT_HEIGHT;
+}
+
+function terrainBlockToColumnSegments(block: TerrainBlock, x: number): TerrainColumnSegment[] {
+  if (!blockCoversX(block, x)) {
+    return [];
+  }
+
+  return [
+    {
+      topY: round(block.y + block.height, 2),
+      bottomY: round(block.y, 2),
+      type: block.isFoundation ? "foundation" : "block",
+      destructible: !block.isFoundation,
+      topKind: "flat",
+    },
+  ];
+}
+
+function terrainSlopeToColumnSegments(
+  segment: TerrainSegment,
+  x: number,
+): TerrainColumnSegment[] {
+  if (!segmentCoversX(segment, x)) {
+    return [];
+  }
+
+  const topY = getSegmentYAtX(segment, x);
+
+  return [
+    {
+      topY: round(topY, 2),
+      bottomY: round(topY - AIR_TERRAIN_HEIGHT, 2),
+      type: "segment",
+      destructible: true,
+      topKind: "slope",
+    },
+  ];
+}
+
+function subtractHolesFromColumnSegment(
+  segment: TerrainColumnSegment,
+  x: number,
+  holes: TerrainHole[],
+): TerrainColumnSegment[] {
+  return holes.reduce<TerrainColumnSegment[]>(
+    (segments, hole) => segments.flatMap((current) => subtractHoleFromSingleSegment(current, x, hole)),
+    [segment],
+  );
+}
+
+function subtractHoleFromSingleSegment(
+  segment: TerrainColumnSegment,
+  x: number,
+  hole: TerrainHole,
+): TerrainColumnSegment[] {
+  const dx = x - hole.x;
+
+  if (Math.abs(dx) >= hole.radius) {
+    return [segment];
+  }
+
+  const offsetY = Math.sqrt(hole.radius ** 2 - dx ** 2);
+  const removeBottom = hole.y - offsetY;
+  const removeTop = hole.y + offsetY;
+
+  if (removeTop <= segment.bottomY + FLOAT_EPSILON || removeBottom >= segment.topY - FLOAT_EPSILON) {
+    return [segment];
+  }
+
+  const nextSegments: TerrainColumnSegment[] = [];
+  const lowerTop = Math.min(segment.topY, removeBottom);
+  const upperBottom = Math.max(segment.bottomY, removeTop);
+
+  if (lowerTop > segment.bottomY + FLOAT_EPSILON) {
+    nextSegments.push({
+      ...segment,
+      topY: round(lowerTop, 2),
+      topKind: "hole",
+    });
+  }
+
+  if (segment.topY > upperBottom + FLOAT_EPSILON) {
+    nextSegments.push({
+      ...segment,
+      bottomY: round(upperBottom, 2),
+    });
+  }
+
+  return nextSegments;
+}
+
 export function getTerrainMapLabel(mapId: TerrainMapId): string {
   const labels: Record<TerrainMapId, string> = {
-    map1: "3학년 1반",
-    map2: "3학년 2반",
-    map5: "3학년 3반",
-    map6: "3학년 4반",
-    map7: "3학년 5반",
-    map8: "3학년 6반",
-    map3: "열쇠",
-    map4: "체크 타일",
+    map1: "3\uD559\uB144 1\uBC18",
+    map2: "3\uD559\uB144 2\uBC18",
+    map5: "3\uD559\uB144 3\uBC18",
+    map6: "3\uD559\uB144 4\uBC18",
+    map7: "3\uD559\uB144 5\uBC18",
+    map8: "3\uD559\uB144 6\uBC18",
+    map3: "\uC5F4\uC1E0",
+    map4: "\uCCB4\uD06C \uD0C0\uC77C",
   };
 
   return labels[mapId];
 }
-
 export function findProjectileTerrainImpact(
   shooter: Point,
   quadratic: Quadratic,
   groundImpact: Point,
   terrain: TerrainState | TerrainBlock[],
   minTravelDistance = 0,
-): { point: Point; blockId: string } | null {
+): { point: Point; blockId: string; collisionType: "terrain" } | null {
   if (!Number.isFinite(quadratic.a)) {
     return null;
   }
 
   const normalizedTerrain = normalizeTerrain(terrain);
-  const { blocks, segments, holes } = normalizedTerrain;
+  const terrainForImpact = {
+    ...normalizedTerrain,
+    columns: buildTerrainColumnMap(normalizedTerrain),
+  };
   const distanceX = groundImpact.x - shooter.x;
   const steps = Math.max(1, Math.ceil(Math.abs(distanceX) / 0.02));
-  let earlyTerrainImpact: { point: Point; blockId: string } | null = null;
+  let previousPoint: Point = shooter;
 
   for (let index = 1; index <= steps; index += 1) {
     const t = index / steps;
@@ -382,41 +630,73 @@ export function findProjectileTerrainImpact(
     const traveled = Math.hypot(x - shooter.x, y - shooter.y);
 
     const point = { x, y };
-    const hitBlock = blocks.find(
-      (block) => isPointInsideBlock(point, block) && !isPointInsideAnyHole(point, holes),
-    );
-    const hitSegment = segments.find(
-      (segment) => isPointInsideSegmentBody(point, segment) && !isPointInsideAnyHole(point, holes),
-    );
-    const hitTerrainId = hitBlock?.id ?? hitSegment?.id ?? null;
+    const hitTerrainId = getProjectileTerrainHitId(point, terrainForImpact);
 
     if (traveled < minTravelDistance) {
-      if (!earlyTerrainImpact && hitTerrainId && traveled >= MIN_EARLY_TERRAIN_IMPACT_DISTANCE) {
-        earlyTerrainImpact = {
-          point: { x: roundToStep(x), y: round(y, 2) },
-          blockId: hitTerrainId,
-        };
-      }
-
+      previousPoint = point;
       continue;
     }
 
-    if (hitBlock) {
+    if (hitTerrainId) {
       return {
-        point: { x: roundToStep(x), y: round(y, 2) },
-        blockId: hitBlock.id,
+        point: refineProjectileTerrainImpactPoint(previousPoint, point, terrainForImpact),
+        blockId: hitTerrainId,
+        collisionType: "terrain",
       };
     }
 
-    if (hitSegment) {
-      return {
-        point: { x: roundToStep(x), y: round(y, 2) },
-        blockId: hitSegment.id,
-      };
+    previousPoint = point;
+  }
+
+  return null;
+}
+
+function getProjectileTerrainHitId(point: Point, terrain: TerrainState): string | null {
+  const columns = terrain.columns ?? buildTerrainColumnMap(terrain);
+  return isPointInsideTerrainColumns(point, columns) ? "terrain-column" : null;
+}
+
+function refineProjectileTerrainImpactPoint(
+  from: Point,
+  to: Point,
+  terrain: TerrainState,
+): Point {
+  if (!isPointInsideTerrainForProjectile(to, terrain)) {
+    return { x: roundToStep(to.x), y: round(to.y, 2) };
+  }
+
+  if (isPointInsideTerrainForProjectile(from, terrain)) {
+    return { x: roundToStep(to.x), y: round(to.y, 2) };
+  }
+
+  let low = from;
+  let high = to;
+
+  for (let index = 0; index < 18; index += 1) {
+    const mid = {
+      x: (low.x + high.x) / 2,
+      y: (low.y + high.y) / 2,
+    };
+
+    if (isPointInsideTerrainForProjectile(mid, terrain)) {
+      high = mid;
+    } else {
+      low = mid;
     }
   }
 
-  return earlyTerrainImpact;
+  return { x: roundToStep(high.x), y: round(high.y, 2) };
+}
+
+function isPointInsideTerrainForProjectile(point: Point, terrain: TerrainState): boolean {
+  const columns = terrain.columns ?? buildTerrainColumnMap(terrain);
+  return isPointInsideTerrainColumns(point, columns);
+}
+
+function isPointInsideTerrainColumns(point: Point, columns: TerrainColumnMap): boolean {
+  return getStableTerrainColumnSegments(columns, point.x).some(
+    (segment) => point.y > segment.bottomY + FLOAT_EPSILON && point.y < segment.topY - FLOAT_EPSILON,
+  );
 }
 
 export function destroyTerrainBlocks(
@@ -436,6 +716,8 @@ export function destroyTerrain(
     return terrain;
   }
 
+  const nextColumns = destroyTerrainColumns(buildTerrainColumnMap(terrain), center, radius);
+
   return {
     ...terrain,
     holes: [
@@ -447,7 +729,237 @@ export function destroyTerrain(
         radius,
       },
     ],
+    columns: nextColumns,
   };
+}
+
+export function destroyTerrainColumns(
+  columns: TerrainColumnMap,
+  center: Point,
+  radius: number,
+): TerrainColumnMap {
+  const nextColumns = cloneTerrainColumnMap(columns);
+  const startIndex = terrainColumnIndex(Math.max(BOARD.xMin, center.x - radius));
+  const endIndex = terrainColumnIndex(Math.min(BOARD.xMax, center.x + radius));
+
+  for (let index = startIndex; index <= endIndex; index += 1) {
+    const dx = getClosestDxFromCircleCenterToColumn(index, center.x);
+
+    if (Math.abs(dx) > radius) {
+      continue;
+    }
+
+    const dy = Math.sqrt(radius ** 2 - dx ** 2);
+    const destroyBottom = center.y - dy;
+    const destroyTop = center.y + dy;
+    const column = nextColumns.get(index) ?? [];
+    const nextColumn = column.flatMap((segment) =>
+      destroyColumnSegment(segment, destroyBottom, destroyTop),
+    );
+
+    if (nextColumn.length > 0) {
+      nextColumns.set(index, nextColumn.sort((a, b) => b.topY - a.topY));
+    } else {
+      nextColumns.delete(index);
+    }
+  }
+
+  return cleanupTerrainColumns(nextColumns, {
+    blastCenter: center,
+    blastRadius: radius,
+  });
+}
+
+export function cleanupTerrainColumns(
+  columns: TerrainColumnMap,
+  options: TerrainColumnCleanupOptions = {},
+): TerrainColumnMap {
+  const cleanedColumns = new Map<number, TerrainColumnSegment[]>();
+  const indexes = [...columns.keys()].sort((a, b) => a - b);
+
+  for (const index of indexes) {
+    const stableSegments = mergeNearbyColumnSegments(
+      (columns.get(index) ?? []).filter((segment) =>
+        !segment.destructible || isStableTerrainColumnSegment(segment),
+      ),
+      index,
+      options,
+    ).filter((segment) => !isIsolatedTinyTerrainFragment(segment, index, columns));
+
+    if (stableSegments.length > 0) {
+      cleanedColumns.set(index, stableSegments.sort((a, b) => b.topY - a.topY));
+    }
+  }
+
+  return cleanedColumns;
+}
+
+function mergeNearbyColumnSegments(
+  segments: TerrainColumnSegment[],
+  index: number,
+  options: TerrainColumnCleanupOptions,
+): TerrainColumnSegment[] {
+  const sortedSegments = [...segments].sort((a, b) => a.bottomY - b.bottomY);
+  const mergedSegments: TerrainColumnSegment[] = [];
+
+  for (const segment of sortedSegments) {
+    const previous = mergedSegments[mergedSegments.length - 1];
+
+    if (
+      previous &&
+      canMergeColumnSegments(previous, segment) &&
+      segment.bottomY - previous.topY <= TERRAIN_COLUMN_CLEANUP_MERGE_GAP &&
+      !isGapInsideCleanupBlast(index, previous.topY, segment.bottomY, options)
+    ) {
+      previous.topY = round(Math.max(previous.topY, segment.topY), 2);
+      previous.topKind = previous.topKind === "hole" || segment.topKind === "hole" ? "hole" : previous.topKind;
+      continue;
+    }
+
+    mergedSegments.push({ ...segment });
+  }
+
+  return mergedSegments;
+}
+
+function canMergeColumnSegments(a: TerrainColumnSegment, b: TerrainColumnSegment): boolean {
+  return a.type === b.type && a.destructible === b.destructible;
+}
+
+function isGapInsideCleanupBlast(
+  index: number,
+  gapBottom: number,
+  gapTop: number,
+  options: TerrainColumnCleanupOptions,
+): boolean {
+  if (!options.blastCenter || options.blastRadius === undefined || gapTop <= gapBottom) {
+    return false;
+  }
+
+  const dx = getClosestDxFromCircleCenterToColumn(index, options.blastCenter.x);
+
+  if (Math.abs(dx) > options.blastRadius) {
+    return false;
+  }
+
+  const dy = Math.sqrt(options.blastRadius ** 2 - dx ** 2);
+  const destroyBottom = options.blastCenter.y - dy;
+  const destroyTop = options.blastCenter.y + dy;
+
+  return destroyTop > gapBottom + FLOAT_EPSILON && destroyBottom < gapTop - FLOAT_EPSILON;
+}
+
+export function findDestructibleSegmentsInsideBlast(
+  columns: TerrainColumnMap,
+  center: Point,
+  radius: number,
+): TerrainBlastResidual[] {
+  const residuals: TerrainBlastResidual[] = [];
+  const startIndex = terrainColumnIndex(Math.max(BOARD.xMin, center.x - radius));
+  const endIndex = terrainColumnIndex(Math.min(BOARD.xMax, center.x + radius));
+
+  for (let index = startIndex; index <= endIndex; index += 1) {
+    const x = terrainColumnCenterX(index);
+    const dx = x - center.x;
+
+    if (Math.abs(dx) >= radius - FLOAT_EPSILON) {
+      continue;
+    }
+
+    const dy = Math.sqrt(radius ** 2 - dx ** 2);
+    const destroyBottom = center.y - dy;
+    const destroyTop = center.y + dy;
+
+    for (const segment of columns.get(index) ?? []) {
+      if (
+        segment.destructible &&
+        isStableTerrainColumnSegment(segment) &&
+        destroyTop > segment.bottomY + FLOAT_EPSILON &&
+        destroyBottom < segment.topY - FLOAT_EPSILON
+      ) {
+        residuals.push({
+          index,
+          x,
+          bottomY: segment.bottomY,
+          topY: segment.topY,
+          destructible: segment.destructible,
+          type: segment.type,
+          topKind: segment.topKind,
+        });
+      }
+    }
+  }
+
+  return residuals;
+}
+
+export function assertNoDestructibleSegmentsInsideBlast(
+  columns: TerrainColumnMap,
+  center: Point,
+  radius: number,
+): void {
+  const residuals = findDestructibleSegmentsInsideBlast(columns, center, radius);
+
+  if (residuals.length > 0) {
+    throw new Error(`Destructible terrain remains inside blast: ${JSON.stringify(residuals.slice(0, 5))}`);
+  }
+}
+
+function isIsolatedTinyTerrainFragment(
+  segment: TerrainColumnSegment,
+  index: number,
+  columns: TerrainColumnMap,
+): boolean {
+  const height = segment.topY - segment.bottomY;
+
+  if (!segment.destructible || height >= MIN_TERRAIN_COLUMN_SEGMENT_HEIGHT * 2.5) {
+    return false;
+  }
+
+  return ![-1, 1].some((offset) =>
+    (columns.get(index + offset) ?? []).some((neighbor) =>
+      isStableTerrainColumnSegment(neighbor) &&
+      Math.min(segment.topY, neighbor.topY) - Math.max(segment.bottomY, neighbor.bottomY) >
+        MIN_TERRAIN_COLUMN_SEGMENT_HEIGHT,
+    ),
+  );
+}
+function floorCoordinate(value: number, digits: number): number {
+  const scale = 10 ** digits;
+  return Math.floor(value * scale) / scale;
+}
+
+function ceilCoordinate(value: number, digits: number): number {
+  const scale = 10 ** digits;
+  return Math.ceil(value * scale) / scale;
+}
+function destroyColumnSegment(
+  segment: TerrainColumnSegment,
+  destroyBottom: number,
+  destroyTop: number,
+): TerrainColumnSegment[] {
+  if (!segment.destructible || destroyTop <= segment.bottomY || destroyBottom >= segment.topY) {
+    return [segment];
+  }
+
+  const pieces: TerrainColumnSegment[] = [];
+
+  if (destroyBottom > segment.bottomY) {
+    pieces.push({
+      ...segment,
+      topY: floorCoordinate(Math.min(destroyBottom, segment.topY), 2),
+      topKind: "hole",
+    });
+  }
+
+  if (destroyTop < segment.topY) {
+    pieces.push({
+      ...segment,
+      bottomY: ceilCoordinate(Math.max(destroyTop, segment.bottomY), 2),
+    });
+  }
+
+  return pieces.filter((piece) => !piece.destructible || isStableTerrainColumnSegment(piece));
 }
 
 export function settlePlayersOnTerrain(
@@ -458,7 +970,14 @@ export function settlePlayersOnTerrain(
   const normalizedTerrain = normalizeTerrain(terrain);
 
   return players.map((player) => {
-    const supportY = findSupportYOrNull(player.tankPosition.x, player.tankPosition.y, normalizedTerrain);
+    const supportY = normalizedTerrain.columns
+      ? findColumnSupportAtX(
+          normalizedTerrain.columns,
+          player.tankPosition.x,
+          player.tankPosition.y + SUPPORT_TOLERANCE,
+          false,
+        )?.topY ?? null
+      : findSupportYOrNull(player.tankPosition.x, player.tankPosition.y, normalizedTerrain);
     if (supportY !== null && Math.abs(player.tankPosition.y - supportY) <= SUPPORT_TOLERANCE) {
       return player;
     }
@@ -487,7 +1006,13 @@ export function findSupportYOrNull(
   terrain: TerrainState | TerrainBlock[],
 ): number | null {
   const normalizedTerrain = normalizeTerrain(terrain);
+
+  if (normalizedTerrain.columns) {
+    return findColumnSupportAtX(normalizedTerrain.columns, x, fromY, false)?.topY ?? null;
+  }
+
   const { blocks, segments, holes } = normalizedTerrain;
+
   const nonFoundationBlockY = blocks
     .filter((block) => !block.isFoundation)
     .filter((block) => blockCoversX(block, x))
@@ -523,6 +1048,12 @@ export function findSupportAtX(
   terrain: TerrainState | TerrainBlock[],
 ): { y: number; slope: number } | null {
   const normalizedTerrain = normalizeTerrain(terrain);
+
+  if (normalizedTerrain.columns) {
+    const support = findColumnSupportAtX(normalizedTerrain.columns, x, fromY, false);
+    return support ? { y: support.topY, slope: 0 } : null;
+  }
+
   const nonFoundationBlockSupports = normalizedTerrain.blocks
     .filter((block) => !block.isFoundation)
     .filter((block) => blockCoversX(block, x))
@@ -707,6 +1238,38 @@ function isPointInsideAnyHole(point: Point, holes: TerrainHole[]): boolean {
 }
 
 function doesBlastTouchTerrain(terrain: TerrainState, center: Point, radius: number): boolean {
+  if (terrain.columns) {
+    const startIndex = terrainColumnIndex(Math.max(BOARD.xMin, center.x - radius));
+    const endIndex = terrainColumnIndex(Math.min(BOARD.xMax, center.x + radius));
+
+    for (let index = startIndex; index <= endIndex; index += 1) {
+      const dx = getClosestDxFromCircleCenterToColumn(index, center.x);
+
+      if (Math.abs(dx) > radius) {
+        continue;
+      }
+
+      const dy = Math.sqrt(radius ** 2 - dx ** 2);
+      const destroyBottom = center.y - dy;
+      const destroyTop = center.y + dy;
+      const column = terrain.columns.get(index) ?? [];
+
+      if (
+        column.some(
+          (segment) =>
+            segment.destructible &&
+            isStableTerrainColumnSegment(segment) &&
+            destroyTop > segment.bottomY &&
+            destroyBottom < segment.topY,
+        )
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   return (
     terrain.blocks.some((block) => blockIntersectsCircle(block, center, radius)) ||
     terrain.segments.some((segment) => segmentIntersectsCircle(segment, center, radius))
