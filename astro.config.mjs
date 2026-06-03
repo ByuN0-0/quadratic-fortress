@@ -2,7 +2,11 @@ import { defineConfig } from "astro/config";
 import react from "@astrojs/react";
 
 export default defineConfig({
-  integrations: [react()],
+  integrations: [
+    react({
+      exclude: [/\/src\/components\/QuadraticFortress\.tsx$/],
+    }),
+  ],
   vite: {
     optimizeDeps: {
       esbuildOptions: {

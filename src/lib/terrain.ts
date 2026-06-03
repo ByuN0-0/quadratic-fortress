@@ -33,7 +33,22 @@ export type TerrainState = {
   columns?: TerrainColumnMap;
 };
 
-export type TerrainMapId = "map1" | "map2" | "map3" | "map4" | "map5" | "map6" | "map7" | "map8";
+export type TerrainMapId =
+  | "map1"
+  | "map2"
+  | "map3"
+  | "map4"
+  | "map5"
+  | "map6"
+  | "map7"
+  | "map8"
+  | "map9"
+  | "map10"
+  | "map11"
+  | "map12"
+  | "map13";
+
+export type TerrainMapCategory = "jangwi" | "etc";
 
 export type TerrainHole = {
   id: string;
@@ -90,9 +105,85 @@ export const TERRAIN_MAP_IDS: TerrainMapId[] = [
   "map6",
   "map7",
   "map8",
+  "map9",
+  "map10",
   "map3",
   "map4",
+  "map11",
+  "map12",
+  "map13",
 ];
+
+const TERRAIN_MAP_METADATA: Record<
+  TerrainMapId,
+  { label: string; category: TerrainMapCategory; description: string }
+> = {
+  map1: {
+    label: "3학년 1반",
+    category: "jangwi",
+    description: "3학년 1반 학급 숫자 지형에서 대결합니다.",
+  },
+  map2: {
+    label: "3학년 2반",
+    category: "jangwi",
+    description: "3학년 2반 학급 숫자 지형에서 대결합니다.",
+  },
+  map5: {
+    label: "3학년 3반",
+    category: "jangwi",
+    description: "3학년 3반 학급 숫자 지형에서 대결합니다.",
+  },
+  map6: {
+    label: "3학년 4반",
+    category: "jangwi",
+    description: "3학년 4반 학급 숫자 지형에서 대결합니다.",
+  },
+  map7: {
+    label: "3학년 5반",
+    category: "jangwi",
+    description: "3학년 5반 학급 숫자 지형에서 대결합니다.",
+  },
+  map8: {
+    label: "3학년 6반",
+    category: "jangwi",
+    description: "3학년 6반 학급 숫자 지형에서 대결합니다.",
+  },
+  map9: {
+    label: "3학년 7반",
+    category: "jangwi",
+    description: "3학년 7반 학급 숫자 지형에서 대결합니다.",
+  },
+  map10: {
+    label: "3학년 8반",
+    category: "jangwi",
+    description: "3학년 8반 학급 숫자 지형에서 대결합니다.",
+  },
+  map3: {
+    label: "열쇠",
+    category: "etc",
+    description: "열쇠 모양 지형의 통로를 공략합니다.",
+  },
+  map4: {
+    label: "체크 타일",
+    category: "etc",
+    description: "떨어지는 발판을 계산하며 이동합니다.",
+  },
+  map11: {
+    label: "미로",
+    category: "etc",
+    description: "여러 통로와 장애물을 피해 포물선 경로를 설계합니다.",
+  },
+  map12: {
+    label: "회랑",
+    category: "etc",
+    description: "층층이 이어진 긴 통로 사이로 포물선 경로를 설계합니다.",
+  },
+  map13: {
+    label: "돛단배",
+    category: "etc",
+    description: "돛대와 선체 지형을 피해 포물선 경로를 설계합니다.",
+  },
+};
 
 const INITIAL_TERRAIN_BY_MAP: Record<
   TerrainMapId,
@@ -134,6 +225,8 @@ const INITIAL_TERRAIN_BY_MAP: Record<
   map6: createClassMapTerrain("map6", 4),
   map7: createClassMapTerrain("map7", 5),
   map8: createClassMapTerrain("map8", 6),
+  map9: createClassMapTerrain("map9", 7),
+  map10: createClassMapTerrain("map10", 8),
   map3: {
     blocks: createMapThreeBlocks(),
     segments: [],
@@ -142,11 +235,23 @@ const INITIAL_TERRAIN_BY_MAP: Record<
     blocks: createMapFourBlocks(),
     segments: [],
   },
+  map11: {
+    blocks: createMazeMapBlocks(),
+    segments: [],
+  },
+  map12: {
+    blocks: createCorridorMapBlocks(),
+    segments: [],
+  },
+  map13: {
+    blocks: createSailboatMapBlocks(),
+    segments: [],
+  },
 };
 
 function createClassMapTerrain(
   prefix: string,
-  classDigit: 3 | 4 | 5 | 6,
+  classDigit: 3 | 4 | 5 | 6 | 7 | 8,
 ): { blocks: TerrainBlock[]; segments: TerrainSegment[] } {
   return {
     blocks: [
@@ -166,7 +271,7 @@ function createClassMapTerrain(
   };
 }
 
-function createClassDigitBlocks(prefix: string, x: number, y: number, digit: 3 | 4 | 5 | 6): TerrainBlock[] {
+function createClassDigitBlocks(prefix: string, x: number, y: number, digit: 3 | 4 | 5 | 6 | 7 | 8): TerrainBlock[] {
   if (digit === 3) {
     return createDigitThreeBlocks(prefix, x, y);
   }
@@ -179,7 +284,15 @@ function createClassDigitBlocks(prefix: string, x: number, y: number, digit: 3 |
     return createDigitFiveBlocks(prefix, x, y);
   }
 
-  return createDigitSixBlocks(prefix, x, y);
+  if (digit === 6) {
+    return createDigitSixBlocks(prefix, x, y);
+  }
+
+  if (digit === 7) {
+    return createDigitSevenBlocks(prefix, x, y);
+  }
+
+  return createDigitEightBlocks(prefix, x, y);
 }
 
 function createDigitThreeBlocks(prefix: string, x: number, y: number): TerrainBlock[] {
@@ -261,6 +374,36 @@ function createDigitSixBlocks(prefix: string, x: number, y: number): TerrainBloc
   ]);
 }
 
+function createDigitSevenBlocks(prefix: string, x: number, y: number): TerrainBlock[] {
+  return createDigitBlocks(prefix, x, y, [
+    [0, 4],
+    [1, 4],
+    [2, 4],
+    [2, 0],
+    [2, 1],
+    [2, 2],
+    [2, 3],
+  ]);
+}
+
+function createDigitEightBlocks(prefix: string, x: number, y: number): TerrainBlock[] {
+  return createDigitBlocks(prefix, x, y, [
+    [0, 0],
+    [1, 0],
+    [2, 0],
+    [0, 1],
+    [2, 1],
+    [0, 2],
+    [1, 2],
+    [2, 2],
+    [0, 3],
+    [2, 3],
+    [0, 4],
+    [1, 4],
+    [2, 4],
+  ]);
+}
+
 function createDigitOneBlocks(prefix: string, x: number, y: number): TerrainBlock[] {
   return createDigitBlocks(prefix, x, y, [
     [0, 0],
@@ -326,6 +469,72 @@ function createMapFourBlocks(): TerrainBlock[] {
     ...createBlockRow("map4-right-g", 5, 2, 2),
     ...createBlockRow("map4-right-h", 7, 1, 2),
   ];
+}
+
+function createMazeMapBlocks(): TerrainBlock[] {
+  const cells: [number, number][] = [
+    [-7, 8], [-6, 8], [-5, 8],
+    [4, 8], [5, 8], [6, 8],
+    [-7, 7], [-6, 7], [-5, 7],
+    [4, 7], [5, 7], [6, 7],
+    [-7, 6], [-6, 6], [-5, 6], [-4, 6], [-3, 6], [-2, 6], [-1, 6],
+    [0, 6], [1, 6], [2, 6], [3, 6], [4, 6], [5, 6], [6, 6],
+    [-5, 5], [0, 5], [4, 5],
+    [-9, 4], [-8, 4], [-7, 4], [-5, 4], [-3, 4], [-1, 4], [0, 4],
+    [2, 4], [3, 4], [4, 4], [6, 4], [7, 4], [8, 4],
+    [-9, 3], [-5, 3], [-3, 3], [2, 3], [8, 3],
+    [-9, 2], [-8, 2], [-6, 2], [-5, 2], [-4, 2], [-3, 2], [-2, 2],
+    [-1, 2], [0, 2], [2, 2], [4, 2], [5, 2], [6, 2], [8, 2],
+    [-9, 1], [-4, 1], [0, 1], [2, 1], [8, 1],
+    [-9, 0], [-8, 0], [-7, 0], [-6, 0], [-5, 0], [-4, 0], [-3, 0],
+    [-2, 0], [-1, 0], [0, 0], [1, 0], [2, 0], [3, 0], [4, 0],
+    [5, 0], [6, 0], [7, 0], [8, 0], [9, 0],
+  ];
+
+  return createDigitBlocks("map11-maze", 0, 0, cells);
+}
+
+function createCorridorMapBlocks(): TerrainBlock[] {
+  const cells: [number, number][] = [
+    [-9, 8], [-8, 8], [-7, 8], [-6, 8], [-5, 8], [-4, 8],
+    [-2, 8], [-1, 8], [0, 8], [1, 8], [2, 8], [3, 8],
+    [5, 8], [6, 8], [7, 8], [8, 8],
+    [-9, 6], [-8, 6], [-7, 6], [-6, 6], [-5, 6],
+    [-3, 6], [-2, 6], [-1, 6], [0, 6],
+    [2, 6], [3, 6], [4, 6], [5, 6], [6, 6], [7, 6], [8, 6],
+    [-9, 4], [-8, 4], [-7, 4],
+    [-5, 4], [-4, 4], [-3, 4],
+    [-1, 4], [0, 4], [1, 4], [2, 4], [3, 4], [4, 4],
+    [6, 4], [7, 4], [8, 4],
+    [-9, 2], [-8, 2], [-7, 2], [-6, 2], [-5, 2], [-4, 2],
+    [-3, 2], [-2, 2], [-1, 2], [0, 2], [1, 2],
+    [3, 2], [4, 2], [5, 2], [6, 2], [7, 2], [8, 2],
+    [-6, 0], [-4, 0], [-3, 0], [-2, 0],
+    [1, 0], [2, 0], [4, 0], [5, 0],
+  ];
+
+  return createDigitBlocks("map12-corridor", 0, 0, cells);
+}
+
+function createSailboatMapBlocks(): TerrainBlock[] {
+  const cells: [number, number][] = [
+    [-6, 0], [-5, 0], [-4, 0], [-3, 0], [-2, 0], [-1, 0],
+    [0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [5, 0],
+    [-8, 1], [-7, 1], [-6, 1], [-5, 1], [-4, 1], [-3, 1], [-2, 1], [-1, 1],
+    [0, 1], [1, 1], [2, 1], [3, 1], [4, 1], [5, 1], [6, 1], [7, 1],
+    [-9, 2], [-8, 2], [-7, 2], [-6, 2], [-5, 2], [-4, 2], [-3, 2], [-2, 2], [-1, 2],
+    [0, 2], [1, 2], [2, 2], [3, 2], [4, 2], [5, 2], [6, 2], [7, 2], [8, 2],
+    [-9, 3], [-8, 3], [7, 3], [8, 3],
+    [-1, 3],
+    [-1, 4],
+    [-1, 5],
+    [-7, 6], [-5, 6], [-1, 6], [0, 6],
+    [-6, 7], [-1, 7], [0, 7], [1, 7], [4, 7], [6, 7],
+    [-1, 8], [0, 8], [1, 8], [5, 8],
+    [-1, 9], [0, 9],
+  ];
+
+  return createDigitBlocks("map13-sailboat", 0, 0, cells);
 }
 
 function createBlockGrid(prefix: string, x: number, y: number, width: number, height: number): TerrainBlock[] {
@@ -590,18 +799,29 @@ function subtractHoleFromSingleSegment(
 }
 
 export function getTerrainMapLabel(mapId: TerrainMapId): string {
-  const labels: Record<TerrainMapId, string> = {
-    map1: "3\uD559\uB144 1\uBC18",
-    map2: "3\uD559\uB144 2\uBC18",
-    map5: "3\uD559\uB144 3\uBC18",
-    map6: "3\uD559\uB144 4\uBC18",
-    map7: "3\uD559\uB144 5\uBC18",
-    map8: "3\uD559\uB144 6\uBC18",
-    map3: "\uC5F4\uC1E0",
-    map4: "\uCCB4\uD06C \uD0C0\uC77C",
-  };
+  return TERRAIN_MAP_METADATA[mapId].label;
+}
 
-  return labels[mapId];
+export function getTerrainMapDescription(mapId: TerrainMapId): string {
+  return TERRAIN_MAP_METADATA[mapId].description;
+}
+
+export function getTerrainMapCategory(mapId: TerrainMapId): TerrainMapCategory {
+  return TERRAIN_MAP_METADATA[mapId].category;
+}
+
+export function getTerrainMapIdsByCategory(category: TerrainMapCategory): TerrainMapId[] {
+  return TERRAIN_MAP_IDS.filter((mapId) => getTerrainMapCategory(mapId) === category);
+}
+
+export function getTerrainMapCategoryLabel(category: TerrainMapCategory): string {
+  return category === "jangwi" ? "장위중학교" : "기타맵";
+}
+
+export function getTerrainMapCategoryDescription(category: TerrainMapCategory): string {
+  return category === "jangwi"
+    ? "3학년 학급 맵과 장위중학교 전용 맵을 선택합니다."
+    : "열쇠, 체크 타일 등 기타 맵을 선택합니다.";
 }
 export function findProjectileTerrainImpact(
   shooter: Point,

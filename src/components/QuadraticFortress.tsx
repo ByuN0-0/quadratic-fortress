@@ -44,9 +44,13 @@ import {
 } from "../lib/game";
 import {
   TERRAIN_COLUMN_STEP,
-  TERRAIN_MAP_IDS,
+  getTerrainMapCategoryDescription,
+  getTerrainMapCategoryLabel,
+  getTerrainMapDescription,
+  getTerrainMapIdsByCategory,
   getTerrainMapLabel,
   type TerrainColumnSegment,
+  type TerrainMapCategory,
   type TerrainMapId,
 } from "../lib/terrain";
 import { buildColumnRenderShapes, type ColumnRenderShape } from "../lib/terrainRender";
@@ -91,7 +95,7 @@ type ScreenPoint = {
 };
 
 type CoordinateDisplayMode = "teacher" | "student";
-type ScreenMode = "menu" | "map" | "game";
+type ScreenMode = "menu" | "category" | "map" | "game";
 type PracticeDialogMode = "intro" | "success" | "complete" | null;
 type DisplayHpByPlayer = Record<PlayerId, number>;
 type AimInputByPlayer = Record<PlayerId, ShotInput>;
@@ -198,6 +202,7 @@ function QuadraticFortressApp() {
   const [tutorial, setTutorial] = useState<TutorialState>(() => createInitialTutorialState(true));
   const [screenMode, setScreenMode] = useState<ScreenMode>("menu");
   const [selectedMode, setSelectedMode] = useState<GameMode>("normal");
+  const [selectedMapCategory, setSelectedMapCategory] = useState<TerrainMapCategory>("jangwi");
   const [animationProgress, setAnimationProgress] = useState(1);
   const [isResultOpen, setIsResultOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -239,6 +244,11 @@ function QuadraticFortressApp() {
     }
 
     setSelectedMode(mode);
+    setScreenMode("category");
+  };
+
+  const chooseMapCategory = (category: TerrainMapCategory) => {
+    setSelectedMapCategory(category);
     setScreenMode("map");
   };
 
@@ -791,13 +801,13 @@ function QuadraticFortressApp() {
     );
   }
 
-  if (screenMode === "map") {
+  if (screenMode === "category") {
     return (
       <main className="game-shell mode-menu-screen">
-        <section className="game-topbar" aria-label="맵 선택 화면">
+        <section className="game-topbar" aria-label="맵 범주 선택 화면">
           <div>
             <p className="eyebrow">{getGameModeLabel(selectedMode)}</p>
-            <h1>맵 선택</h1>
+            <h1>맵 범주 선택</h1>
           </div>
           <button
             className="secondary-button compact-button"
@@ -808,13 +818,59 @@ function QuadraticFortressApp() {
           </button>
         </section>
 
+        <section className="mode-menu-panel" aria-label="맵 범주 선택">
+          <div>
+            <p className="eyebrow">Map Category</p>
+            <h2>맵의 범주를 선택하세요</h2>
+          </div>
+          <div className="mode-choice-grid">
+            {(["jangwi", "etc"] as TerrainMapCategory[]).map((category) => (
+              <button
+                className={category === "jangwi" ? "mode-choice-button" : "mode-choice-button is-danger"}
+                key={category}
+                type="button"
+                onClick={() => chooseMapCategory(category)}
+              >
+                <strong>{getTerrainMapCategoryLabel(category)}</strong>
+                <span>{getTerrainMapCategoryDescription(category)}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (screenMode === "map") {
+    const selectableMapIds = getTerrainMapIdsByCategory(selectedMapCategory);
+    const mapSelectionTitle =
+      selectedMapCategory === "jangwi" ? "장위중학교 맵을 선택하세요" : "기타맵을 선택하세요";
+
+    return (
+      <main className="game-shell mode-menu-screen">
+        <section className="game-topbar" aria-label="맵 선택 화면">
+          <div>
+            <p className="eyebrow">
+              {getGameModeLabel(selectedMode)} · {getTerrainMapCategoryLabel(selectedMapCategory)}
+            </p>
+            <h1>세부 맵 선택</h1>
+          </div>
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            onClick={() => setScreenMode("category")}
+          >
+            뒤로
+          </button>
+        </section>
+
         <section className="mode-menu-panel" aria-label="맵 선택">
           <div>
             <p className="eyebrow">Map</p>
-            <h2>플레이할 맵을 선택하세요</h2>
+            <h2>{mapSelectionTitle}</h2>
           </div>
           <div className="mode-choice-grid">
-            {TERRAIN_MAP_IDS.map((mapId) => (
+            {selectableMapIds.map((mapId) => (
               <button
                 className="mode-choice-button"
                 key={mapId}
@@ -822,7 +878,7 @@ function QuadraticFortressApp() {
                 onClick={() => startGame(selectedMode, mapId)}
               >
                 <strong>{getTerrainMapLabel(mapId)}</strong>
-                <span>선택한 모드로 게임을 시작합니다.</span>
+                <span>{getTerrainMapDescription(mapId)}</span>
               </button>
             ))}
           </div>

@@ -10,6 +10,11 @@ import {
   findSupportY,
   findSupportAtX,
   findSupportYOrNull,
+  getTerrainMapCategory,
+  getTerrainMapCategoryDescription,
+  getTerrainMapCategoryLabel,
+  getTerrainMapDescription,
+  getTerrainMapIdsByCategory,
   getTerrainMapLabel,
   getSegmentYAtX,
   OCEAN_FALL_Y,
@@ -50,11 +55,27 @@ describe("terrain", () => {
     const map4 = createInitialTerrain("map4");
     const map5 = createInitialTerrain("map5");
     const map8 = createInitialTerrain("map8");
+    const map10 = createInitialTerrain("map10");
 
     expect(map1.blocks.map((block) => block.id)).not.toEqual(map2.blocks.map((block) => block.id));
     expect(map2.blocks.map((block) => block.id)).not.toEqual(map3.blocks.map((block) => block.id));
     expect(map5.blocks.map((block) => block.id)).not.toEqual(map8.blocks.map((block) => block.id));
-    expect(TERRAIN_MAP_IDS).toEqual(["map1", "map2", "map5", "map6", "map7", "map8", "map3", "map4"]);
+    expect(map8.blocks.map((block) => block.id)).not.toEqual(map10.blocks.map((block) => block.id));
+    expect(TERRAIN_MAP_IDS).toEqual([
+      "map1",
+      "map2",
+      "map5",
+      "map6",
+      "map7",
+      "map8",
+      "map9",
+      "map10",
+      "map3",
+      "map4",
+      "map11",
+      "map12",
+      "map13",
+    ]);
     expect(map1.holes).toEqual([]);
     expect(map2.holes).toEqual([]);
     expect(map3.holes).toEqual([]);
@@ -71,14 +92,18 @@ describe("terrain", () => {
     expect(map4.blocks.some((block) => block.id.startsWith("map4-right"))).toBe(true);
   });
 
-  it("adds class maps for grades 3 through 6", () => {
+  it("adds class maps for grades 3 through 8", () => {
     expect(getTerrainMapLabel("map5")).toBe("3학년 3반");
     expect(getTerrainMapLabel("map6")).toBe("3학년 4반");
     expect(getTerrainMapLabel("map7")).toBe("3학년 5반");
     expect(getTerrainMapLabel("map8")).toBe("3학년 6반");
+    expect(getTerrainMapLabel("map9")).toBe("3학년 7반");
+    expect(getTerrainMapLabel("map10")).toBe("3학년 8반");
 
     expect(createInitialTerrain("map5").blocks.some((block) => block.id.startsWith("map5-class"))).toBe(true);
     expect(createInitialTerrain("map8").blocks.some((block) => block.id.startsWith("map8-class"))).toBe(true);
+    expect(createInitialTerrain("map9").blocks.some((block) => block.id.startsWith("map9-class"))).toBe(true);
+    expect(createInitialTerrain("map10").blocks.some((block) => block.id.startsWith("map10-class"))).toBe(true);
   });
 
   it("uses block pieces for the 3학년 4반 digit", () => {
@@ -98,9 +123,71 @@ describe("terrain", () => {
     expect(map3.blocks.some((block) => block.id.startsWith("map3-right-base"))).toBe(true);
   });
 
+  it("groups terrain maps by selection category", () => {
+    expect(getTerrainMapCategoryLabel("jangwi")).toBe("장위중학교");
+    expect(getTerrainMapCategoryLabel("etc")).toBe("기타맵");
+    expect(getTerrainMapCategoryDescription("jangwi")).toContain("3학년");
+    expect(getTerrainMapCategoryDescription("etc")).toContain("열쇠");
+    expect(getTerrainMapIdsByCategory("jangwi")).toEqual([
+      "map1",
+      "map2",
+      "map5",
+      "map6",
+      "map7",
+      "map8",
+      "map9",
+      "map10",
+    ]);
+    expect(getTerrainMapIdsByCategory("etc")).toEqual(["map3", "map4", "map11", "map12", "map13"]);
+    expect(getTerrainMapCategory("map1")).toBe("jangwi");
+    expect(getTerrainMapCategory("map11")).toBe("etc");
+    expect(getTerrainMapCategory("map12")).toBe("etc");
+    expect(getTerrainMapCategory("map13")).toBe("etc");
+  });
+
+  it("adds the maze map as an etc map", () => {
+    const map11 = createInitialTerrain("map11");
+
+    expect(getTerrainMapLabel("map11")).toBe("미로");
+    expect(getTerrainMapDescription("map11")).toContain("여러 통로");
+    expect(map11.blocks.some((block) => block.id.startsWith("map11-maze"))).toBe(true);
+    expect(map11.blocks.some((block) => block.id.startsWith("map11-foundation"))).toBe(false);
+    expect(map11.blocks.some((block) => block.isFoundation)).toBe(false);
+  });
+
+  it("adds the corridor map as an etc map", () => {
+    const map12 = createInitialTerrain("map12");
+
+    expect(getTerrainMapLabel("map12")).toBe("회랑");
+    expect(getTerrainMapDescription("map12")).toContain("긴 통로");
+    expect(map12.blocks.some((block) => block.id.startsWith("map12-corridor"))).toBe(true);
+    expect(map12.blocks.some((block) => block.x === -1 && block.y === 0)).toBe(false);
+    expect(map12.blocks.filter((block) => block.y === 0 && block.x >= -4 && block.x <= -2)).toHaveLength(3);
+    expect(findSupportYOrNull(-8, 10, map12)).toBe(9);
+    expect(findSupportYOrNull(8, 10, map12)).toBe(9);
+  });
+
+  it("adds the sailboat map as an etc map", () => {
+    const map13 = createInitialTerrain("map13");
+
+    expect(map13.blocks.some((block) => block.id.startsWith("map13-sailboat"))).toBe(true);
+    expect(map13.blocks.some((block) => block.x === 4 && block.y === 8)).toBe(false);
+    expect(map13.blocks.some((block) => block.x === 5 && block.y === 8)).toBe(true);
+    expect(map13.blocks.some((block) => block.x === 6 && block.y === 8)).toBe(false);
+    expect(map13.blocks.filter((block) => (
+      block.id.startsWith("map13-sailboat") && (
+        (block.x === 4 && block.y === 7) ||
+        (block.x === 5 && block.y === 8) ||
+        (block.x === 6 && block.y === 7)
+      )
+    ))).toHaveLength(3);
+    expect(findSupportYOrNull(-8, 10, map13)).toBe(4);
+    expect(findSupportYOrNull(8, 10, map13)).toBe(4);
+  });
+
 
   it("keeps only the lowest class-map safety layer non-destructible", () => {
-    const classMapIds = ["map1", "map2", "map5", "map6", "map7", "map8"] as const;
+    const classMapIds = ["map1", "map2", "map5", "map6", "map7", "map8", "map9", "map10"] as const;
 
     for (const mapId of classMapIds) {
       const columns = buildTerrainColumnMap(createInitialTerrain(mapId));
@@ -119,7 +206,7 @@ describe("terrain", () => {
   });
 
   it("can create class maps without the non-destructible safety layer", () => {
-    const classMapIds = ["map1", "map2", "map5", "map6", "map7", "map8"] as const;
+    const classMapIds = ["map1", "map2", "map5", "map6", "map7", "map8", "map9", "map10"] as const;
 
     for (const mapId of classMapIds) {
       const normalTerrain = createInitialTerrain(mapId);
@@ -132,7 +219,7 @@ describe("terrain", () => {
   });
 
   it("destroys class-map playable ground inside a tank-centered blast while keeping the safety layer", () => {
-    const classMapIds = ["map1", "map2", "map5", "map6", "map7", "map8"] as const;
+    const classMapIds = ["map1", "map2", "map5", "map6", "map7", "map8", "map9", "map10"] as const;
 
     for (const mapId of classMapIds) {
       const center = { x: 8, y: 2.5 };
