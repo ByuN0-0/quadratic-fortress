@@ -468,6 +468,7 @@ function createMapFourBlocks(): TerrainBlock[] {
     ...createBlockRow("map4-right-f", 3, 3, 2),
     ...createBlockRow("map4-right-g", 5, 2, 2),
     ...createBlockRow("map4-right-h", 7, 1, 2),
+    ...createBlockRow("map4-right-i", 7, 3, 2),
   ];
 }
 

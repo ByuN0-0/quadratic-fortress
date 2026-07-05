@@ -90,6 +90,11 @@ describe("terrain", () => {
     expect(getTerrainMapLabel("map4")).toBe("체크 타일");
     expect(map4.blocks.some((block) => block.id.startsWith("map4-left"))).toBe(true);
     expect(map4.blocks.some((block) => block.id.startsWith("map4-right"))).toBe(true);
+    expect(map4.blocks.some((block) => block.x === 7 && block.y === 3)).toBe(true);
+    expect(map4.blocks.some((block) => block.x === 8 && block.y === 3)).toBe(true);
+    expect(map4.blocks.filter((block) => block.id.startsWith("map4-left"))).toHaveLength(
+      map4.blocks.filter((block) => block.id.startsWith("map4-right")).length,
+    );
   });
 
   it("adds class maps for grades 3 through 8", () => {
